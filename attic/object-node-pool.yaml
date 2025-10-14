@@ -1,0 +1,46 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: multiarch-spot
+  annotations:
+    kubernetes.io/description: "EKS Auto Nodepool (Multi-Arch Spot for CI/CD)"
+spec:
+  disruption:
+    consolidateAfter: 5m
+    consolidationPolicy: WhenEmpty
+  template:
+    metadata:
+      labels:
+        lifecycle: Ec2Spot
+        intent: apps
+        aws.amazon.com/spot: "true"
+        hub.jupyter.org/node-purpose: user
+        cicd-builds: "true"
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: eks-nodeclass
+      taints:
+        - key: cicd-builds
+          value: "true"
+          effect: NoSchedule
+      requirements:
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["spot"]
+        - key: "eks.amazonaws.com/instance-category"
+          operator: In
+          values: ["c", "m", "r"]
+        - key: "eks.amazonaws.com/instance-cpu"
+          operator: Gt
+          values: ["1"]
+        - key: "topology.kubernetes.io/zone"
+          operator: In
+          values: ["us-east-1a"]
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64", "arm64"]
+  limits:
+    cpu: "64"
+    memory: 128Gi

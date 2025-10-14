@@ -1,0 +1,42 @@
+# DISABLED: Kaniko Self-Build Configuration
+# 
+# WHY DISABLED:
+# Kaniko cannot build itself due to BuildKit incompatibilities in its Dockerfile:
+# - Uses `RUN --mount=from=busybox` which Kaniko doesn't support
+# - Creates bootstrapping problem: can't use Kaniko to build Kaniko
+#
+# SOLUTION ADOPTED:
+# Using external maintained image: martizih/kaniko:v1.26.0-debug
+# - Multi-arch support (amd64/arm64)
+# - Community maintained
+# - Zero maintenance overhead for us
+#
+# See GitHub Issue #6 for full rationale
+#
+# Original configuration preserved below for reference:
+
+upstream_repo: https://github.com/chainguard-dev/kaniko
+upstream_ref: v1.25.3  # Can be tag, branch, or commit SHA
+
+# Path to Dockerfile relative to upstream repo root
+dockerfile_path: deploy/Dockerfile
+
+# Dockerfile target (for multi-stage builds)
+target: "kaniko-debug"  # Building the debug variant as specified in the spec
+
+# Build context path (defaults to repo root)
+context_path: .
+
+# Build arguments to pass to Kaniko
+build_args: []
+
+# Architectures to build
+platforms:
+  - linux/amd64
+  - linux/arm64
+
+# Tags to apply (in addition to date-commit tag)
+# Format: {directory-name}-{tag}
+additional_tags:
+  - v1.25.3
+  # - latest try again x7

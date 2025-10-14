@@ -1,0 +1,23 @@
+# Test application for multi-arch pipeline validation
+# Using spkane/scratch-helloworld as real-world Go app test (x3)
+# This tests our remote cloning implementation!
+
+# Remote repository configuration
+upstream_repo: https://github.com/spkane/scratch-helloworld.git
+upstream_ref: main
+
+# Path to Dockerfile relative to repository root
+dockerfile_path: Dockerfile
+
+# Build context path (defaults to .)
+context_path: .
+
+# Architectures to build
+platforms:
+  - linux/amd64
+  - linux/arm64
+
+# Tags to apply
+additional_tags:
+  - latest
+  - pipeline-test

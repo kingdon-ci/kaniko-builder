@@ -1,0 +1,25 @@
+# Build configuration for manifest-tool
+# Self-contained build - no dependencies on other images
+# Updated to remove curl dependency (Oct 16, 2025)
+use_local_context: true
+
+# Path to Dockerfile relative to this directory
+dockerfile_path: Dockerfile
+
+# No specific target needed
+target: ""
+
+# Build context path (this directory)
+context_path: .
+
+# No build arguments needed (self-contained)
+build_args: []
+
+# Architectures to build (both needed for multi-arch manifests)
+platforms:
+  - linux/amd64
+  - linux/arm64
+
+# Tags to apply
+additional_tags:
+  - latest

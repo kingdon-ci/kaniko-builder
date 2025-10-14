@@ -1,0 +1,115 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xaws-eks-smce-v6-0-0.cluster.smce.io
+  labels:
+    smce.io/provider: aws
+    smce.io/environment: smce
+    smce.io/deployment-version: 6.0.0
+spec:
+  writeConnectionSecretsToNamespace: crossplane-system
+  compositeTypeRef:
+    apiVersion: cluster.smce.io/v1alpha1
+    kind: XAWS-EKS-SMCE-v6
+  patchSets:
+    - name: common-parameters
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.project.providerConfigName
+          toFieldPath: spec.providerConfigRef.name
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.resourceConfig.deletionPolicy
+          toFieldPath: spec.deletionPolicy
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.resourceConfig.region
+          toFieldPath: spec.forProvider.region
+
+  # Resources
+  resources:
+
+  # [...] the composition has been abbreviated to illustrate the configuration of the node pool only
+
+## EKS Auto Mode Nodepool (Spot)
+
+  - name: eks-spot-nodepool
+    base:
+      apiVersion: kubernetes.crossplane.io/v1alpha2
+      kind: Object
+      metadata:
+        labels:
+          role: eks-spot-nodepool
+      spec:
+        forProvider:
+          manifest:
+            apiVersion: karpenter.sh/v1
+            kind: NodePool
+            metadata:
+              name: spot-pool
+              annotations:
+                kubernetes.io/description: "EKS Auto Nodepool (Spot-Default)"
+            spec:
+              disruption:
+                consolidateAfter: 1m
+                consolidationPolicy: WhenEmpty
+              template:
+                metadata:
+                  labels:
+                    lifecycle: Ec2Spot
+                    intent: apps
+                    aws.amazon.com/spot: "true"
+                    hub.jupyter.org/node-purpose: user
+                spec:
+                  nodeClassRef:
+                    group: eks.amazonaws.com
+                    kind: NodeClass
+                    name: eks-nodeclass
+                  requirements:
+                    - key: "karpenter.sh/capacity-type"
+                      operator: In
+                      values: ["spot"]
+                    - key: "eks.amazonaws.com/instance-category"
+                      operator: In
+                      values: ["c", "m", "r"]
+                    - key: "eks.amazonaws.com/instance-cpu"
+                      operator: Gt
+                      values: ["1"]
+                    - key: "topology.kubernetes.io/zone"
+                      operator: In
+                      values: ["patch-me"]
+                    - key: "kubernetes.io/arch"
+                      operator: In
+                      values: ["amd64"]
+              limits:
+                cpu: "64"
+                memory: 128Gi
+    patches:
+    - type: PatchSet
+      patchSetName: common-parameters
+    - type: FromCompositeFieldPath
+      fromFieldPath: spec.resourceConfig.region
+      toFieldPath: spec.forProvider.manifest.spec.template.spec.requirements[3].values[0]
+      transforms:
+        - type: string
+          string:
+            fmt: "%sa"  # Use az 'a' in region
+
+  - name: eks-spot-nodepool-uses-cluster
+    base:
+      apiVersion: apiextensions.crossplane.io/v1beta1
+      kind: Usage
+      spec:
+        replayDeletion: true
+        of:
+          apiVersion: eks.aws.upbound.io/v1beta1
+          kind: ClusterAuth
+          resourceSelector:
+            matchControllerRef: true
+            matchLabels:
+              role: eks-cluster-auth
+        by:
+          apiVersion: kubernetes.crossplane.io/v1alpha2
+          kind: Object
+          resourceSelector:
+            matchControllerRef: true
+            matchLabels:
+              role: eks-spot-nodepool

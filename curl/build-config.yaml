@@ -1,0 +1,27 @@
+# Build configuration for curl utility
+# BOOTSTRAP MODE: Using local context to build from well-known image
+# Once manifest-tool is working, we can switch back to upstream_repo
+use_local_context: true
+
+# Path to Dockerfile relative to this directory
+dockerfile_path: Dockerfile
+
+# No specific target needed for this simple image
+target: ""
+
+# Build context path (this directory)
+context_path: .
+
+# Build arguments to pass to Kaniko
+build_args: []
+
+# Architectures to build (single-arch for now to test pipeline)
+platforms:
+  - linux/amd64
+  - linux/arm64
+
+# Tags to apply (in addition to date-commit tag)
+# Format: {directory-name}-{tag}
+additional_tags:
+  - latest
+  - test

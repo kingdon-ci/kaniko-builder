@@ -1,0 +1,112 @@
+variables: {}
+  # ECR_REGISTRY: public.ecr.aws/smce/smce-images
+  # ECR_REGISTRY: <REDACTED>.dkr.ecr.us-east-1.amazonaws.com/scip/sandbox
+  # ECR_REGISTRY: is set as a CI/CD variable, so that sandbox & prod can be identical
+  # ECR_PUBLIC_REGISTRY: public.ecr.aws/<REDACTED>/smdc
+  # CICD_TAG: scip-sandbox (set as a CI/CD variable)
+
+stages:
+  - prepare
+  - build_and_push
+
+
+## Prepare stage - This stage will prepare the list of directories that need to be processed as part of the build_and_push stage, also it will check if README.md is present in all directories that were modified/added. (Run only on main branch push and merge request events)
+prepare_diff:
+  tags:
+  - $CICD_TAG
+  stage: prepare
+  image: alpine/git:latest
+  script:
+    - |
+      # Export all CI variables before access inside of the script
+      export CI_REPOSITORY_URL CI_COMMIT_REF_NAME
+      export CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+      export CI_PROJECT_DIR
+      $CI_PROJECT_DIR/hack/prepare_diff.sh
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - when: never
+
+  artifacts:
+    paths:
+      - dirs.txt
+
+
+## Build and push stage - This stage will build and push the Docker images to ECR. (Run only on main branch push events which includes merges from merge requests)
+build_and_push:
+  stage: build_and_push
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  dependencies:
+    - prepare_diff
+  script:
+    - |
+      # Handle scheduled pipelines by using rebuild-weekly.txt
+      if [ "$CI_PIPELINE_SOURCE" = "schedule" ]; then
+        if [ ! -f "rebuild-weekly.txt" ]; then
+          echo "rebuild-weekly.txt file not found for scheduled pipeline. Exiting."
+          exit 1
+        fi
+        echo "Scheduled pipeline detected. Using rebuild-weekly.txt as dirs.txt"
+        cp rebuild-weekly.txt dirs.txt
+      else
+        # Exit if no dirs.txt file for non-scheduled pipelines
+        if [ ! -f "dirs.txt" ]; then
+          echo "dirs.txt file not found. Exiting."
+          exit 1
+        fi
+      fi
+      echo "{\"credsStore\":\"ecr-login\"}" > /kaniko/.docker/config.json
+      IFS=$'\n'
+      for dir in $(cat dirs.txt); do
+        if [ "$dir" = "." ]; then
+          echo "Skipping root directory"
+          continue
+        fi
+        echo "Processing $dir"
+        if [[ -f "$CI_PROJECT_DIR/$dir/Dockerfile" && $CI_COMMIT_REF_NAME == "main" ]]; then
+          echo "Building and pushing Docker image for $dir"
+
+          # For all pipelines, use date-commit format
+          DATE_TAG=$(date +%Y%m%d)
+          export IMAGE_TAG=${dir##*/}-$DATE_TAG-$CI_COMMIT_SHORT_SHA
+
+          echo "Using image tag: $IMAGE_TAG"
+          COMMAND="/kaniko/executor --context $CI_PROJECT_DIR/$dir --dockerfile $CI_PROJECT_DIR/$dir/Dockerfile --cache=false --use-new-run --cleanup --build-arg ECR_REGISTRY=${ECR_REGISTRY} --build-arg SMCE_SERVICES_GITHUB_TOKEN=${SMCE_SERVICES_GITHUB_TOKEN} --destination=$ECR_REGISTRY:$IMAGE_TAG"
+        fi
+
+        # Check if .image_tags file exists
+        if [[ -f "$CI_PROJECT_DIR/$dir/.image_tags" ]]; then
+          echo "Found .image_tags file in $dir"
+          while IFS= read -r tag || [[ -n "$tag" ]]; do
+            echo "Adding tag from .image_tags: $tag"
+            COMMAND="$COMMAND --destination=$ECR_REGISTRY:$dir-$tag"
+            echo "Building and pushing Docker image for $dir with tag $tag"
+
+            if [[ -n "$ECR_PUBLIC_REGISTRY" ]]; then
+              COMMAND="$COMMAND --destination=$ECR_PUBLIC_REGISTRY:$dir-$tag"
+              echo "Adding public destination for tag $tag"
+            fi
+          done < "$CI_PROJECT_DIR/$dir/.image_tags"
+        else
+          echo "No .image_tags file found in $dir"
+        fi
+
+        echo "Executing command: $COMMAND"
+        eval $COMMAND
+      done
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: always
+    - when: never
+  tags:
+  - $CICD_TAG

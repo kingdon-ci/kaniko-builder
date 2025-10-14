@@ -1,0 +1,547 @@
+# Variables are set as CI/CD variables in GitLab
+# - ECR_REGISTRY: The ECR registry URL
+# - CICD_TAG: The runner tag for prepare stage
+# - CICD_TAG_AMD64: The runner tag for amd64 builds
+# - CICD_TAG_ARM64: The runner tag for arm64 builds
+
+stages:
+  - prepare
+  - build
+  - manifest
+
+# Prepare stage - Determine which directories need to be processed
+prepare:
+  tags:
+    - $CICD_TAG
+  stage: prepare
+  image: alpine/git:latest
+  script:
+    - |
+      # Export CI variables for the prepare_diff.sh script
+      export CI_REPOSITORY_URL CI_COMMIT_REF_NAME
+      export CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+      export CI_PROJECT_DIR
+      $CI_PROJECT_DIR/hack/prepare_diff.sh
+      
+      # Filter dirs.txt to only include directories with build-config.yaml
+      if [ -f "dirs.txt" ]; then
+        echo "Filtering directories to only those with build-config.yaml..."
+        > dirs.txt.filtered
+        while IFS= read -r dir; do
+          if [ -f "$dir/build-config.yaml" ]; then
+            echo "  ✓ $dir has build-config.yaml"
+            echo "$dir" >> dirs.txt.filtered
+          else
+            echo "  ✗ $dir has no build-config.yaml - skipping"
+          fi
+        done < dirs.txt
+        mv dirs.txt.filtered dirs.txt
+      fi
+      
+      # Determine which architectures are needed
+      echo "Determining required architectures..."
+      NEED_AMD64=false
+      NEED_ARM64=false
+      
+      if [ -f "dirs.txt" ]; then
+        while IFS= read -r dir; do
+          if [ -f "$dir/build-config.yaml" ]; then
+            # Check for amd64
+            if grep -A 10 "^platforms:" "$dir/build-config.yaml" | grep -q "linux/amd64"; then
+              echo "  $dir needs amd64"
+              NEED_AMD64=true
+            fi
+            # Check for arm64
+            if grep -A 10 "^platforms:" "$dir/build-config.yaml" | grep -q "linux/arm64"; then
+              echo "  $dir needs arm64"
+              NEED_ARM64=true
+            fi
+          fi
+        done < dirs.txt
+      fi
+      
+      # Create architecture flags
+      if [ "$NEED_AMD64" = "true" ]; then
+        echo "true" > need_amd64.txt
+        echo "✓ AMD64 builds required"
+      else
+        echo "false" > need_amd64.txt
+        echo "✗ AMD64 builds not required"
+      fi
+      
+      if [ "$NEED_ARM64" = "true" ]; then
+        echo "true" > need_arm64.txt
+        echo "✓ ARM64 builds required"
+      else
+        echo "false" > need_arm64.txt
+        echo "✗ ARM64 builds not required"
+      fi
+      
+      echo "========================================="
+      echo "Pre-cloning remote repositories..."
+      
+      # Pre-clone remote repositories for build stage
+      if [ -f "dirs.txt" ]; then
+        while IFS= read -r dir; do
+          if [ -f "$dir/build-config.yaml" ]; then
+            # Check if this directory needs remote cloning
+            USE_LOCAL=$(grep "use_local_context:" "$dir/build-config.yaml" | cut -d':' -f2- | tr -d ' ' || echo "")
+            
+            if [ "$USE_LOCAL" != "true" ]; then
+              # This directory needs remote cloning
+              UPSTREAM_REPO=$(grep "upstream_repo:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+              UPSTREAM_REF=$(grep "upstream_ref:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+              
+              if [ -n "$UPSTREAM_REPO" ] && [ -n "$UPSTREAM_REF" ]; then
+                echo "📦 Cloning $dir from $UPSTREAM_REPO@$UPSTREAM_REF"
+                
+                # Create workspace for this directory
+                CLONE_DIR="clone-${dir}"
+                git clone "$UPSTREAM_REPO" "$CLONE_DIR"
+                cd "$CLONE_DIR"
+                git checkout "$UPSTREAM_REF"
+                cd ..
+                
+                # Package the cloned repository as an artifact
+                ARTIFACT_NAME="${dir}-source.tar.gz"
+                tar -czf "$ARTIFACT_NAME" -C "$CLONE_DIR" .
+                echo "📦 Created artifact: $ARTIFACT_NAME"
+                
+                # Clean up the clone directory to save space
+                rm -rf "$CLONE_DIR"
+                
+                echo "✓ Pre-cloned $dir successfully"
+              else
+                echo "❌ $dir missing upstream_repo or upstream_ref"
+                exit 1
+              fi
+            else
+              echo "⏩ $dir uses local context - no cloning needed"
+            fi
+          fi
+        done < dirs.txt
+      fi
+      
+      echo "========================================="
+      echo "Prepare stage summary:"
+      cat dirs.txt
+      echo "AMD64 needed: $(cat need_amd64.txt)"
+      echo "ARM64 needed: $(cat need_arm64.txt)"
+      echo "========================================="
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: always
+    - when: never
+  artifacts:
+    paths:
+      - dirs.txt
+      - need_amd64.txt
+      - need_arm64.txt
+      - "*-source.tar.gz"
+
+# Build stage - Build Kaniko for arm64
+.build_template: &build_template
+  stage: build
+  image:
+    name: martizih/kaniko:v1.26.0-debug
+    entrypoint: [""]
+  dependencies:
+    - prepare
+  before_script:
+    - |
+      echo "Build stage starting..."
+      echo "Remote repositories are pre-cloned by prepare stage"
+      echo "No git installation needed in Kaniko build environment"
+  script:
+    - |
+      # Handle scheduled pipelines by using rebuild-weekly.txt
+      if [ "$CI_PIPELINE_SOURCE" = "schedule" ]; then
+        if [ ! -f "rebuild-weekly.txt" ]; then
+          echo "rebuild-weekly.txt file not found for scheduled pipeline. Exiting."
+          exit 1
+        fi
+        echo "Scheduled pipeline detected. Using rebuild-weekly.txt as dirs.txt"
+        cp rebuild-weekly.txt dirs.txt
+      elif [ ! -f "dirs.txt" ]; then
+        # For non-scheduled pipelines, dirs.txt should be created by prepare stage
+        # If it doesn't exist, the prepare stage might have failed
+        echo "dirs.txt file not found. Exiting."
+        exit 1
+      fi
+
+      # Set up Docker config for ECR
+      echo "{\"credsStore\":\"ecr-login\"}" > /kaniko/.docker/config.json
+
+      # Process each directory in dirs.txt
+      IFS=$'\n'
+      BUILT_SOMETHING=false
+      for dir in $(cat dirs.txt); do
+        echo "========================================="
+        echo "Processing directory: $dir"
+        echo "========================================="
+        
+        # Read build config
+        if [ ! -f "$dir/build-config.yaml" ]; then
+          echo "No build-config.yaml found in $dir. Skipping."
+          continue
+        fi
+        
+        echo "Found build-config.yaml in $dir"
+        
+        # Check if this architecture is in the platforms list
+        echo "Checking if linux/${ARCH} is in platforms list..."
+        PLATFORMS=$(grep -A 10 "^platforms:" "$dir/build-config.yaml" | grep "linux/${ARCH}" || echo "")
+        if [ -z "$PLATFORMS" ]; then
+          echo "Architecture ${ARCH} not in platforms list for $dir. Skipping."
+          continue
+        fi
+        
+        echo "Architecture ${ARCH} found in platforms list for $dir"
+
+        set -x
+        
+        # Extract values from build-config.yaml (use || echo "" to handle missing fields)
+        USE_LOCAL=$(grep "use_local_context:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+        MANUAL_BUILD=$(grep "manual_build:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+        UPSTREAM_REPO=$(grep "upstream_repo:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+        UPSTREAM_REF=$(grep "upstream_ref:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+        DOCKERFILE_PATH=$(grep "dockerfile_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+        CONTEXT_PATH=$(grep "context_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+        TARGET=$(grep "target:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' | tr -d '"' || echo "")
+        
+        # Check for manual build mode (for BuildKit-incompatible images)
+        if [ "$MANUAL_BUILD" = "true" ]; then
+          echo "🔧 Manual build mode detected for $dir"
+          echo "Skipping Kaniko build - using pre-built images"
+          
+          # Extract manual image tag for this architecture
+          MANUAL_IMAGE=$(grep -A 5 "manual_images:" "$dir/build-config.yaml" | grep "${ARCH}:" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+          
+          if [ -n "$MANUAL_IMAGE" ]; then
+            echo "Using manual image: $MANUAL_IMAGE"
+            # Create a tag file pointing to the manual image
+            MANUAL_TAG=$(echo "$MANUAL_IMAGE" | sed "s|.*/||")  # Extract tag from full image path
+            echo "$MANUAL_TAG" > "${dir}-${ARCH}.tag"
+            echo "✅ Manual build configured for $dir-${ARCH}: $MANUAL_TAG"
+            BUILT_SOMETHING=true
+            continue
+          else
+            echo "❌ ERROR: manual_build=true but no manual_images.${ARCH} specified!"
+            exit 1
+          fi
+        fi
+        
+        # Default context_path to . if not specified
+        if [ -z "$CONTEXT_PATH" ]; then
+          CONTEXT_PATH="."
+        fi
+        
+        # Determine workspace based on use_local_context
+        if [ "$USE_LOCAL" = "true" ]; then
+          echo "Using local context for $dir"
+          WORKSPACE="$CI_PROJECT_DIR/$dir"
+        else
+          echo "Using pre-cloned repository for $dir"
+          echo "Upstream repo: $UPSTREAM_REPO"
+          echo "Upstream ref: $UPSTREAM_REF"
+          
+          # Extract the pre-cloned repository from artifacts
+          WORKSPACE="/workspace-${dir}"
+          ARTIFACT_NAME="${dir}-source.tar.gz"
+          
+          if [ -f "$ARTIFACT_NAME" ]; then
+            echo "📦 Extracting $ARTIFACT_NAME to $WORKSPACE"
+            mkdir -p "$WORKSPACE"
+            tar -xzf "$ARTIFACT_NAME" -C "$WORKSPACE"
+            echo "✓ Repository extracted successfully"
+          else
+            echo "❌ Pre-cloned artifact $ARTIFACT_NAME not found!"
+            echo "Available files:"
+            ls -la *.tar.gz || echo "No .tar.gz files found"
+            exit 1
+          fi
+        fi
+
+        set +x
+        
+        echo "Dockerfile path: $DOCKERFILE_PATH"
+        echo "Context path: $CONTEXT_PATH"
+        echo "Target: $TARGET"
+        echo "Workspace: $WORKSPACE"
+        
+        # Generate image tags
+        if [ "$USE_LOCAL" = "true" ]; then
+          # For local builds, use simpler tagging
+          DATE_TAG=$(date +%Y%m%d)
+          BASE_TAG="${dir}-${DATE_TAG}"
+          ARCH_TAG="${BASE_TAG}-${ARCH}"
+        else
+          # For remote builds, use upstream ref in tag since we can't get commit SHA from extracted dir
+          DATE_TAG=$(date +%Y%m%d)
+          # Use upstream ref instead of commit SHA for extracted repositories
+          REF_TAG=$(echo "$UPSTREAM_REF" | tr '/' '-' | tr '.' '-')  # Sanitize ref for tag
+          BASE_TAG="${dir}-${DATE_TAG}-${REF_TAG}"
+          ARCH_TAG="${BASE_TAG}-${ARCH}"
+        fi
+        
+        echo "Building image with tag: $ARCH_TAG"
+        
+        # Build the image with Kaniko
+        TARGET_ARG=""
+        if [ -n "$TARGET" ]; then
+          TARGET_ARG="--target=$TARGET"
+        fi
+        
+        # Prepare build args - check if we need to pass dependency image tags
+        # Handle build args conditionally based on image needs
+        BUILD_ARG_ECR=""
+        BUILD_ARG_ECR_VAL=""
+        
+        # Check if image needs ECR_REGISTRY build arg (scan Dockerfile for ARG ECR_REGISTRY)
+        if grep -q "^ARG ECR_REGISTRY" "$dir/Dockerfile" 2>/dev/null; then
+          BUILD_ARG_ECR="--build-arg"
+          BUILD_ARG_ECR_VAL="ECR_REGISTRY=$ECR_REGISTRY"
+          echo "Image $dir needs ECR_REGISTRY build arg"
+        else
+          echo "Image $dir is self-contained (no ECR_REGISTRY dependency)"
+        fi
+        
+        # Build for specified architecture
+        echo "========================================="
+        echo "Starting Kaniko build..."
+        echo "========================================="
+        /kaniko/executor \
+          --context=$WORKSPACE/$CONTEXT_PATH \
+          --dockerfile=$WORKSPACE/$DOCKERFILE_PATH \
+          $TARGET_ARG \
+          $BUILD_ARG_ECR $BUILD_ARG_ECR_VAL \
+          --custom-platform=linux/${ARCH} \
+          --cache=false \
+          --use-new-run \
+          --cleanup \
+          --destination=$ECR_REGISTRY:$ARCH_TAG
+        
+        BUILD_EXIT_CODE=$?
+        if [ $BUILD_EXIT_CODE -ne 0 ]; then
+          echo "ERROR: Kaniko build failed with exit code $BUILD_EXIT_CODE"
+          exit $BUILD_EXIT_CODE
+        fi
+        
+        echo "Build successful for $dir"
+        BUILT_SOMETHING=true
+        
+        # Additional tags will be handled in the manifest stage using crane
+        # Build stage only creates the base arch-specific images
+        
+        # Return to project directory for next iteration
+        cd $CI_PROJECT_DIR
+        
+        # Store the arch-specific tag for the manifest stage
+        echo "$ARCH_TAG" > "${dir}-${ARCH}.tag"
+        echo "Saved tag file: ${dir}-${ARCH}.tag with content: $ARCH_TAG"
+      done
+      
+      if [ "$BUILT_SOMETHING" = "false" ]; then
+        echo "========================================="
+        echo "WARNING: No images were built for architecture ${ARCH}"
+        echo "This is OK if all directories were skipped due to platform filtering"
+        echo "========================================="
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: always
+    - when: never
+  tags:
+    - $CICD_TAG
+  artifacts:
+    paths:
+      - "*.tag"
+
+build_arm64:
+  <<: *build_template
+  variables:
+    ARCH: "arm64"
+  tags:
+    - $CICD_TAG_ARM64
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: on_success
+    - when: never
+  before_script:
+    - |
+      # Check if arm64 builds are actually needed
+      if [ -f "need_arm64.txt" ]; then
+        NEED_ARM64=$(cat need_arm64.txt)
+        if [ "$NEED_ARM64" != "true" ]; then
+          echo "ARM64 builds not needed - skipping"
+          exit 0
+        fi
+      fi
+      
+      echo "ARM64 build stage starting..."
+      echo "Remote repositories are pre-cloned by prepare stage"
+      echo "No git installation needed in Kaniko build environment"
+
+build_amd64:
+  <<: *build_template
+  variables:
+    ARCH: "amd64"
+  tags:
+    - $CICD_TAG_AMD64
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: on_success
+    - when: never
+  before_script:
+    - |
+      # Check if amd64 builds are actually needed
+      if [ -f "need_amd64.txt" ]; then
+        NEED_AMD64=$(cat need_amd64.txt)
+        if [ "$NEED_AMD64" != "true" ]; then
+          echo "AMD64 builds not needed - skipping"
+          exit 0
+        fi
+      fi
+      
+      echo "AMD64 build stage starting..."
+      echo "Remote repositories are pre-cloned by prepare stage"
+      echo "No git installation needed in Kaniko build environment"
+
+# Manifest stage - Create multi-arch manifests using our custom manifest-tool image
+manifest:
+  stage: manifest
+  image: 
+    name: $ECR_REGISTRY:manifest-tool-20251016-amd64
+    entrypoint: [""]
+  dependencies:
+    - prepare
+    - build_arm64
+    - build_amd64
+  before_script:
+    - |
+      # Set up Docker config for ECR
+      mkdir -p ~/.docker
+      echo "{\"credsStore\":\"ecr-login\"}" > ~/.docker/config.json
+      
+      # Verify we have the right manifest-tool image with crane
+      echo "Checking manifest-tool image and crane availability..."
+      echo "Current image: $ECR_REGISTRY:manifest-tool-20251016-amd64"
+      
+      # Test if crane is available
+      if command -v crane >/dev/null 2>&1; then
+        echo "✅ crane is available in this image"
+        crane version || echo "crane version check failed but binary exists"
+      else
+        echo "❌ crane not found in image - will install via apk"
+      fi
+      
+      # Test if manifest-tool is available
+      if command -v manifest-tool >/dev/null 2>&1; then
+        echo "✅ manifest-tool is available"
+        manifest-tool --help > /dev/null || echo "manifest-tool exists but help failed"
+      else
+        echo "❌ manifest-tool not found!"
+      fi
+  script:
+    - |
+      echo "Creating multi-arch manifests"
+      
+      # Track if we actually create any manifests
+      MANIFESTS_CREATED=0
+      
+      # Process each directory that was built
+      for dir in $(cat dirs.txt); do
+        echo "Processing manifests for $dir"
+        
+        # Check if this directory has multi-arch builds
+        if [ ! -f "${dir}-arm64.tag" ]; then
+          echo "No arm64 build for $dir - skipping manifest creation (single-arch only)"
+          continue
+        fi
+        
+        if [ ! -f "${dir}-amd64.tag" ]; then
+          echo "No amd64 build for $dir - skipping manifest creation"
+          continue
+        fi
+        
+        # Get the arch-specific tags
+        ARM64_TAG=$(cat "${dir}-arm64.tag")
+        AMD64_TAG=$(cat "${dir}-amd64.tag")
+        BASE_TAG=$(echo $ARM64_TAG | sed 's/-arm64$//')
+        
+        echo "Creating manifest for base tag: $BASE_TAG"
+        echo "  ARM64 image: $ECR_REGISTRY:$ARM64_TAG"
+        echo "  AMD64 image: $ECR_REGISTRY:$AMD64_TAG"
+        
+        # Create manifest-tool YAML (line by line to avoid heredoc issues)
+        echo "image: $ECR_REGISTRY:$BASE_TAG" > /tmp/manifest-${dir}.yaml
+        echo "manifests:" >> /tmp/manifest-${dir}.yaml
+        echo "  - image: $ECR_REGISTRY:$AMD64_TAG" >> /tmp/manifest-${dir}.yaml
+        echo "    platform:" >> /tmp/manifest-${dir}.yaml
+        echo "      architecture: amd64" >> /tmp/manifest-${dir}.yaml
+        echo "      os: linux" >> /tmp/manifest-${dir}.yaml
+        echo "  - image: $ECR_REGISTRY:$ARM64_TAG" >> /tmp/manifest-${dir}.yaml
+        echo "    platform:" >> /tmp/manifest-${dir}.yaml
+        echo "      architecture: arm64" >> /tmp/manifest-${dir}.yaml
+        echo "      os: linux" >> /tmp/manifest-${dir}.yaml
+        
+        echo "Manifest YAML:"
+        cat /tmp/manifest-${dir}.yaml
+        
+        # Push the manifest
+        manifest-tool push from-spec /tmp/manifest-${dir}.yaml
+        
+        echo "Multi-arch manifest created for $BASE_TAG"
+        MANIFESTS_CREATED=$((MANIFESTS_CREATED + 1))
+        
+        # Process additional tags from build-config.yaml
+        echo "Checking for additional tags in $dir/build-config.yaml..."
+        ADDITIONAL_TAGS=$(grep -A 10 "^additional_tags:" "$dir/build-config.yaml" | grep "^  -" | sed 's/^  - //' || echo "")
+        if [ -n "$ADDITIONAL_TAGS" ]; then
+          echo "Processing additional tags for $dir:"
+          
+          # Ensure crane is available (with fallback installation)
+          if ! command -v crane >/dev/null 2>&1; then
+            echo "  crane not found - installing..."
+            apk add --no-cache crane
+          fi
+          
+          for tag in $ADDITIONAL_TAGS; do
+            ADDITIONAL_TAG="${dir}-${tag}"
+            echo "  Creating additional tag: $ADDITIONAL_TAG"
+            
+            # Use crane to copy the multi-arch manifest to the additional tag
+            crane tag "$ECR_REGISTRY:$BASE_TAG" "$ADDITIONAL_TAG"
+            echo "  ✅ Tagged $ECR_REGISTRY:$ADDITIONAL_TAG"
+          done
+        else
+          echo "  No additional tags specified"
+        fi
+      done
+      
+      # Fail if no manifests were created
+      if [ $MANIFESTS_CREATED -eq 0 ]; then
+        echo "❌ ERROR: No multi-arch manifests were created!"
+        echo "This usually means the build stages failed to produce both amd64 and arm64 images."
+        exit 1
+      fi
+      
+      echo "✅ Successfully created $MANIFESTS_CREATED multi-arch manifest(s)"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: always
+    - when: never
+  tags:
+    - $CICD_TAG

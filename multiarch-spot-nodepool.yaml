@@ -1,0 +1,91 @@
+# NodePool configuration for multi-architecture CI/CD builds
+# Add this to your Crossplane composition alongside the existing eks-spot-nodepool
+
+## EKS Multi-Architecture Nodepool (Spot)
+
+- name: eks-multiarch-spot-nodepool
+  base:
+    apiVersion: kubernetes.crossplane.io/v1alpha2
+    kind: Object
+    metadata:
+      labels:
+        role: eks-multiarch-spot-nodepool
+    spec:
+      forProvider:
+        manifest:
+          apiVersion: karpenter.sh/v1
+          kind: NodePool
+          metadata:
+            name: multiarch-spot
+            annotations:
+              kubernetes.io/description: "Multi-architecture Spot NodePool for CI/CD builds"
+          spec:
+            disruption:
+              consolidateAfter: 30s  # Faster consolidation for ephemeral CI workloads
+              consolidationPolicy: WhenEmpty
+            template:
+              metadata:
+                labels:
+                  lifecycle: Ec2Spot
+                  intent: cicd-builds
+                  aws.amazon.com/spot: "true"
+              spec:
+                # Taint to prevent non-CI workloads from scheduling here
+                taints:
+                  - key: cicd-builds
+                    value: "true"
+                    effect: NoSchedule
+                nodeClassRef:
+                  group: eks.amazonaws.com
+                  kind: NodeClass
+                  name: eks-nodeclass
+                requirements:
+                  - key: "karpenter.sh/capacity-type"
+                    operator: In
+                    values: ["spot"]
+                  - key: "eks.amazonaws.com/instance-category"
+                    operator: In
+                    values: ["c", "m", "r"]
+                  - key: "eks.amazonaws.com/instance-cpu"
+                    operator: Gt
+                    values: ["1"]
+                  - key: "topology.kubernetes.io/zone"
+                    operator: In
+                    values: ["patch-me"]  # Will be patched with actual AZ
+                  - key: "kubernetes.io/arch"
+                    operator: In
+                    values: ["amd64", "arm64"]  # KEY: Both architectures supported
+            limits:
+              cpu: "32"      # Focused limit for CI workloads
+              memory: 64Gi
+  patches:
+  - type: PatchSet
+    patchSetName: common-parameters
+  - type: FromCompositeFieldPath
+    fromFieldPath: spec.resourceConfig.region
+    toFieldPath: spec.forProvider.manifest.spec.template.spec.requirements[3].values[0]
+    transforms:
+      - type: string
+        string:
+          fmt: "%sa"  # Use az 'a' in region
+
+- name: eks-multiarch-spot-nodepool-uses-cluster
+  base:
+    apiVersion: apiextensions.crossplane.io/v1beta1
+    kind: Usage
+    spec:
+      replayDeletion: true
+      of:
+        apiVersion: eks.aws.upbound.io/v1beta1
+        kind: ClusterAuth
+        resourceSelector:
+          matchControllerRef: true
+          matchLabels:
+            role: eks-cluster-auth
+      by:
+        apiVersion: kubernetes.crossplane.io/v1alpha2
+        kind: Object
+        resourceSelector:
+          matchControllerRef: true
+          matchLabels:
+            role: eks-multiarch-spot-nodepool
