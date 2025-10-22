@@ -1,0 +1,87 @@
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  name: gitlab-runner
+spec:
+  forProvider:
+    chart:
+      name: gitlab-runner
+      repository: https://charts.gitlab.io/
+      version: "0.78.1"
+    skipCreateNamespace: false
+    namespace: gitlab-runner
+    wait: true
+    waitTimeout: "5m0s"
+    valuesFrom:
+    - secretKeyRef:
+        key: svalues.yaml
+        name: gitlab-runner-values
+        namespace: crossplane-system
+        optional: false
+    values:
+      # RBAC configuration for the top-level SA
+      rbac:
+        create: true
+      # This is the GitLab Runners pod SA - use the default one (this will create the job pods)
+      serviceAccount:
+        create: true
+
+      # set environment variables
+      extraEnv:
+        # https://docs.gitlab.com/runner/executors/kubernetes/#configure-the-executor-service-account
+        KUBERNETES_SERVICE_ACCOUNT: redacted-gitlab-runner-sa # use the IamSa we created via Crossplane
+
+      # GitLab instance configuration
+      gitlabUrl: https://git.redacted.example.com/
+
+      nodeSelector:
+        lifecycle: OnDemand
+        karpenter.sh/nodepool: system-pool
+
+      # Pod annotations for EKS
+      podAnnotations:
+        eks.amazonaws.com/compute-type: ec2
+        eks.amazonaws.com/nodegroup: default
+        karpenter.sh/do-not-evict: "true"
+
+      # Deployment configuration
+      replicas: 1
+
+      # Resource limits
+      resources:
+        limits:
+          cpu: 200m
+          memory: 256Mi
+        requests:
+          cpu: 100m
+          memory: 128Mi
+
+      # Runner configuration
+      runners:
+        config: |
+          [[runners]]
+            [runners.kubernetes]
+              namespace = "{{.Release.Namespace}}"
+              image = "ubuntu:22.04"
+              privileged = false
+              [runners.kubernetes.pod_annotations]
+                "karpenter.sh/do-not-evict" = "true"
+                "eks.amazonaws.com/compute-type" = "ec2"
+              [runners.kubernetes.node_selector]
+                "karpenter.sh/nodepool" = "spot-pool"
+                "lifecycle" = "Ec2Spot"
+
+      # Security context
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
+        privileged: false
+        runAsNonRoot: true
+
+  managementPolicies:
+  - '*'
+  providerConfigRef:
+    name: redacted-aws-admin
+  rollbackLimit: 3
