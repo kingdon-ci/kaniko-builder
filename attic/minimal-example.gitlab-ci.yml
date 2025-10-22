@@ -1,9 +1,9 @@
 variables: {}
-  # ECR_REGISTRY: public.ecr.aws/smce/smce-images
-  # ECR_REGISTRY: <REDACTED>.dkr.ecr.us-east-1.amazonaws.com/scip/sandbox
+  # ECR_REGISTRY: public.ecr.aws/redacted/redacted-images
+  # ECR_REGISTRY: <REDACTED>.dkr.ecr.us-east-1.amazonaws.com/redacted/sandbox
   # ECR_REGISTRY: is set as a CI/CD variable, so that sandbox & prod can be identical
-  # ECR_PUBLIC_REGISTRY: public.ecr.aws/<REDACTED>/smdc
-  # CICD_TAG: scip-sandbox (set as a CI/CD variable)
+  # ECR_PUBLIC_REGISTRY: public.ecr.aws/<REDACTED>/<REDACTED>
+  # CICD_TAG: <REDACTED>-sandbox (set as a CI/CD variable)
 
 stages:
   - prepare
@@ -79,7 +79,7 @@ build_and_push:
           export IMAGE_TAG=${dir##*/}-$DATE_TAG-$CI_COMMIT_SHORT_SHA
 
           echo "Using image tag: $IMAGE_TAG"
-          COMMAND="/kaniko/executor --context $CI_PROJECT_DIR/$dir --dockerfile $CI_PROJECT_DIR/$dir/Dockerfile --cache=false --use-new-run --cleanup --build-arg ECR_REGISTRY=${ECR_REGISTRY} --build-arg SMCE_SERVICES_GITHUB_TOKEN=${SMCE_SERVICES_GITHUB_TOKEN} --destination=$ECR_REGISTRY:$IMAGE_TAG"
+          COMMAND="/kaniko/executor --context $CI_PROJECT_DIR/$dir --dockerfile $CI_PROJECT_DIR/$dir/Dockerfile --cache=false --use-new-run --cleanup --build-arg ECR_REGISTRY=${ECR_REGISTRY} --build-arg REDACTED_SERVICES_GITHUB_TOKEN=${REDACTED_SERVICES_GITHUB_TOKEN} --destination=$ECR_REGISTRY:$IMAGE_TAG"
         fi
 
         # Check if .image_tags file exists

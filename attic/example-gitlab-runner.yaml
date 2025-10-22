@@ -29,10 +29,10 @@ spec:
       # set environment variables
       extraEnv:
         # https://docs.gitlab.com/runner/executors/kubernetes/#configure-the-executor-service-account
-        KUBERNETES_SERVICE_ACCOUNT: smdc-gitlab-runner-sa # use the IamSa we created via Crossplane
+        KUBERNETES_SERVICE_ACCOUNT: redacted-gitlab-runner-sa # use the IamSa we created via Crossplane
 
       # GitLab instance configuration
-      gitlabUrl: https://git.smce.nasa.gov/
+      gitlabUrl: https://git.redacted.example.com/
 
       nodeSelector:
         lifecycle: OnDemand
@@ -83,5 +83,5 @@ spec:
   managementPolicies:
   - '*'
   providerConfigRef:
-    name: smdc-aws-admin
+    name: redacted-aws-admin
   rollbackLimit: 3

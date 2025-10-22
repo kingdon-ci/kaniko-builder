@@ -1,16 +1,16 @@
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
-  name: xaws-eks-smce-v6-0-0.cluster.smce.io
+  name: xaws-eks-redacted-v6-0-0.cluster.redacted.io
   labels:
-    smce.io/provider: aws
-    smce.io/environment: smce
-    smce.io/deployment-version: 6.0.0
+    redacted.io/provider: aws
+    redacted.io/environment: redacted
+    redacted.io/deployment-version: 6.0.0
 spec:
   writeConnectionSecretsToNamespace: crossplane-system
   compositeTypeRef:
-    apiVersion: cluster.smce.io/v1alpha1
-    kind: XAWS-EKS-SMCE-v6
+    apiVersion: cluster.redacted.io/v1alpha1
+    kind: XAWS-EKS-REDACTED-v6
   patchSets:
     - name: common-parameters
       patches:
