@@ -113,7 +113,7 @@ Based on `attic/crossplane-node-pool-objects.yaml`, we need to add a new NodePoo
 ```yaml
 # Change the node selector and add toleration
 runners:
-  tags: "scip-sandbox-amd64"
+  tags: "redacted-sandbox-amd64"
   config: |
     [[runners]]
       [runners.kubernetes]
@@ -135,7 +135,7 @@ runners:
 ```yaml
 # Same changes but for arm64
 runners:
-  tags: "scip-sandbox-arm64"
+  tags: "redacted-sandbox-arm64"
   config: |
     [[runners]]
       [runners.kubernetes]

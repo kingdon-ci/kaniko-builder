@@ -60,7 +60,7 @@ spec:
 
       # Runner configuration with AMD64-specific tag
       runners:
-        tags: "scip-sandbox-amd64"
+        tags: "redacted-sandbox-amd64"
         config: |
           [[runners]]
             [runners.kubernetes]

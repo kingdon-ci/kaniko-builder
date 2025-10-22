@@ -16,7 +16,7 @@ We successfully built the foundation for the kaniko-builder pipeline:
 2. **Built Bootstrap Images** ✨
    - **curl image**: Successfully built and pushed to ECR
      - Tag: `curl-20251015-amd64`
-     - Location: `<REDACTED>.dkr.ecr.us-east-1.amazonaws.com/scip/sandbox`
+     - Location: `<REDACTED>.dkr.ecr.us-east-1.amazonaws.com/redacted/sandbox`
    - **manifest-tool image**: Successfully built and pushed to ECR
      - Tag: `manifest-tool-20251015-amd64`
      - Uses curl as base image (dependency chain working!)

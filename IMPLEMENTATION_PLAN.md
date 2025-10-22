@@ -5,7 +5,7 @@
 The current kaniko-builder pipeline assumes a single `CICD_TAG` can handle both amd64 and arm64 builds. However, to ensure builds run on the correct architecture, we need separate GitLab runners with architecture-specific node selectors.
 
 **Current State:**
-- Single runner with `CICD_TAG: scip-sandbox` 
+- Single runner with `CICD_TAG: redacted-sandbox` 
 - `spot-pool` constrained to amd64 nodes only
 - Pipeline jobs can't guarantee they run on the intended architecture
 
@@ -66,7 +66,7 @@ Based on your existing `attic/example-gitlab-runner.yaml`, create two separate G
            kubernetes.io/arch: amd64  # Add architecture constraint
          
          runners:
-           tags: "scip-sandbox-amd64"  # Architecture-specific tag
+           tags: "redacted-sandbox-amd64"  # Architecture-specific tag
            config: |
              [[runners]]
                [runners.kubernetes]
@@ -104,7 +104,7 @@ Based on your existing `attic/example-gitlab-runner.yaml`, create two separate G
            kubernetes.io/arch: arm64  # Add architecture constraint
          
          runners:
-           tags: "scip-sandbox-arm64"  # Architecture-specific tag
+           tags: "redacted-sandbox-arm64"  # Architecture-specific tag
            config: |
              [[runners]]
                [runners.kubernetes]
@@ -136,7 +136,7 @@ spec:
     values:
       # ... existing values
       runners:
-        tags: "scip-sandbox-amd64,scip-sandbox-arm64"  # Both tags
+        tags: "redacted-sandbox-amd64,redacted-sandbox-arm64"  # Both tags
         config: |
           [[runners]]
             [runners.kubernetes]
@@ -160,8 +160,8 @@ Update `.gitlab-ci.yml` to use architecture-specific runner tags:
 
 ```yaml
 # New CI/CD variables needed:
-# - CICD_TAG_AMD64: scip-sandbox-amd64
-# - CICD_TAG_ARM64: scip-sandbox-arm64
+# - CICD_TAG_AMD64: redacted-sandbox-amd64
+# - CICD_TAG_ARM64: redacted-sandbox-arm64
 
 .build_template: &build_template
   stage: build

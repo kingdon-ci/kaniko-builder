@@ -8,13 +8,13 @@ Before deploying this pipeline, ensure you have:
 
 1. **GitLab CI/CD Variables configured:**
    - `ECR_REGISTRY`: Your ECR registry URL (e.g., `123456789.dkr.ecr.us-east-1.amazonaws.com/your-repo`)
-   - `CICD_TAG_AMD64`: Runner tag for amd64 builds (e.g., `scip-sandbox-amd64`)
-   - `CICD_TAG_ARM64`: Runner tag for arm64 builds (e.g., `scip-sandbox-arm64`)
+   - `CICD_TAG_AMD64`: Runner tag for amd64 builds (e.g., `redacted-sandbox-amd64`)
+   - `CICD_TAG_ARM64`: Runner tag for arm64 builds (e.g., `redacted-sandbox-arm64`)
    - `CICD_TAG`: Legacy runner tag for prepare stage (can use either architecture)
 
 2. **GitLab Runners:**
-   - **AMD64 Runner**: Deployed with `scip-sandbox-amd64` tag, node selector for amd64
-   - **ARM64 Runner**: Deployed with `scip-sandbox-arm64` tag, node selector for arm64
+   - **AMD64 Runner**: Deployed with `redacted-sandbox-amd64` tag, node selector for amd64
+   - **ARM64 Runner**: Deployed with `redacted-sandbox-arm64` tag, node selector for arm64
    - ECR authentication configured (ecr-login credential helper)
    - Docker-in-Docker or Kaniko support
    - **Note**: See `IMPLEMENTATION_PLAN.md` for runner deployment details

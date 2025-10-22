@@ -357,12 +357,12 @@ test_e2e_remote_repository() {
 ### GitLab CI Variables Required
 ```bash
 # ECR Configuration
-ECR_REGISTRY=<REDACTED>.dkr.ecr.us-east-1.amazonaws.com/scip/sandbox
+ECR_REGISTRY=<REDACTED>.dkr.ecr.us-east-1.amazonaws.com/redacted/sandbox
 
 # Runner Tags
-CICD_TAG=scip-sandbox          # General purpose (prepare, manifest)
-CICD_TAG_AMD64=scip-sandbox-amd64  # AMD64 builds
-CICD_TAG_ARM64=scip-sandbox-arm64  # ARM64 builds
+CICD_TAG=redacted-sandbox          # General purpose (prepare, manifest)
+CICD_TAG_AMD64=redacted-sandbox-amd64  # AMD64 builds
+CICD_TAG_ARM64=redacted-sandbox-arm64  # ARM64 builds
 ```
 
 ### Image Tagging Convention

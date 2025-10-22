@@ -65,10 +65,10 @@ kaniko-builder/
 
 3. **Configure GitLab CI/CD Variables**
    ```
-   CICD_TAG_AMD64: scip-sandbox-amd64
-   CICD_TAG_ARM64: scip-sandbox-arm64
+   CICD_TAG_AMD64: redacted-sandbox-amd64
+   CICD_TAG_ARM64: redacted-sandbox-arm64
    ECR_REGISTRY: your-ecr-registry-url
-   CICD_TAG: scip-sandbox (for prepare stage)
+   CICD_TAG: redacted-sandbox (for prepare stage)
    ```
 
 4. **Test the Pipeline**
@@ -103,8 +103,8 @@ After successful deployment, you will have:
 - **Result**: Guaranteed execution on intended architecture
 
 ### Runner Configuration
-- **AMD64 Runner**: `scip-sandbox-amd64` tag, amd64 node selector
-- **ARM64 Runner**: `scip-sandbox-arm64` tag, arm64 node selector
+- **AMD64 Runner**: `redacted-sandbox-amd64` tag, amd64 node selector
+- **ARM64 Runner**: `redacted-sandbox-arm64` tag, arm64 node selector
 - **Job Scheduling**: Pipeline jobs explicitly target correct runner
 
 ### Infrastructure Changes
