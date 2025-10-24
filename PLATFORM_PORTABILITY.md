@@ -8,13 +8,14 @@
 ### **Current State**: GitLab CI Native
 - ✅ **GitLab CI**: Full implementation in `.gitlab-ci.yml`
 - ❌ **GitHub Actions**: Not yet implemented
-- ❌ **Other platforms**: Jenkins, CircleCI, etc. (future)
 
-### **Target State**: Platform Agnostic
+### **Target State**: Dual Platform Support
 - ✅ **GitHub Actions**: Equivalent workflow components
 - ✅ **GitLab CI**: Maintain existing functionality  
 - 🔧 **Hybrid**: Same repository supporting both platforms
-- 🔧 **Enterprise**: Self-hosted Git/CI environments
+- 🔧 **Enterprise**: Self-hosted GitHub/GitLab environments
+
+**Scope Note**: This is about **CI integration only**. Deployment is handled by FluxCD with Image Update Automation, Semver Wildcards, and GitOps patterns. We're not rebuilding Deis Controller or complex CD pipelines—FluxCD already solved that problem elegantly.
 
 ## **Architecture Patterns**
 
@@ -39,7 +40,8 @@ hephy-builder/
 
 ### **Configuration Abstraction**
 ```yaml
-# .hephy/config.yaml (platform-agnostic)
+# .hephy/config.yaml (PROPOSED - NOT YET IMPLEMENTED)
+# This is a mock structure showing potential future configuration
 build_backend: ko
 platforms:
   - linux/amd64
@@ -51,11 +53,46 @@ additional_tags:
   - ${GITHUB_REF_NAME}     # GitHub variable
 ```
 
+**Current Reality**: We use `build-config.yaml` in each directory. The above is a **proposed enhancement** for platform-agnostic configuration.
+
+**Current Specification**: See `BUILD_CONFIG_SPEC.md` for the complete, formal specification of the existing `build-config.yaml` format.
+
+## **Current build-config.yaml Specification**
+
+### **Existing Format** (Currently Implemented)
+```yaml
+# Example: curl/build-config.yaml (WORKING)
+use_local_context: true
+dockerfile_path: Dockerfile
+context_path: .
+platforms:
+  - linux/amd64
+  - linux/arm64
+additional_tags:
+  - latest
+```
+
+```yaml
+# Example: Remote repository (WORKING)  
+upstream_repo: https://github.com/spkane/scratch-helloworld
+upstream_ref: main
+dockerfile_path: Dockerfile
+context_path: .
+platforms:
+  - linux/amd64
+  - linux/arm64
+additional_tags:
+  - latest
+  - pipeline-test
+```
+
+**Documentation**: See existing `build-config.yaml` files in `curl/`, `manifest-tool/`, `test-app/` directories for working examples.
+
 ## **Platform-Specific Implementations**
 
-### **GitHub Actions Pattern**
+### **GitHub Actions Pattern** (PROPOSED)
 ```yaml
-# .github/workflows/hephy-build.yml
+# .github/workflows/hephy-build.yml (NOT YET IMPLEMENTED)
 name: Hephy Build
 on: [push, pull_request]
 jobs:
@@ -69,18 +106,22 @@ jobs:
 
 *[TODO: Research GitHub Actions reusable workflows best practices]*
 
-### **GitLab CI Pattern**
+### **GitLab CI Pattern** (CURRENTLY WORKING)
 ```yaml
-# .gitlab-ci.yml
-include:
-  - remote: 'https://raw.githubusercontent.com/kingdon-ci/hephy-builder/main/gitlab/hephy-build.yml'
+# .gitlab-ci.yml (IMPLEMENTED AND FUNCTIONAL)
+stages:
+  - prepare
+  - build
+  - manifest
 
-variables:
-  HEPHY_BACKEND: kaniko
-  HEPHY_PLATFORMS: 'linux/amd64,linux/arm64'
+prepare:
+  stage: prepare
+  image: alpine/git:latest
+  script: ./hack/prepare_diff.sh
+  # ... (see actual .gitlab-ci.yml for complete implementation)
 ```
 
-*[TODO: Research GitLab CI include patterns, variable inheritance]*
+**Documentation**: See `.gitlab-ci.yml` (495 lines) for the complete, working implementation.
 
 ## **Variable Mapping**
 
@@ -103,9 +144,9 @@ variables:
 
 *[TODO: Research OIDC federation, credential security best practices]*
 
-### **Multi-Registry Support**
+### **Multi-Registry Support** (PROPOSED)
 ```yaml
-# Platform-agnostic registry configuration
+# Platform-agnostic registry configuration (NOT YET IMPLEMENTED)
 registries:
   - name: ghcr
     url: ghcr.io
@@ -119,6 +160,8 @@ registries:
 ```
 
 *[TODO: Design registry abstraction layer]*
+
+**Current Reality**: Registry configuration is handled via environment variables in `.gitlab-ci.yml`. See `ECR_REGISTRY` usage in working pipeline.
 
 ## **Migration Strategies**
 
@@ -154,12 +197,28 @@ registries:
 
 *[TODO: Research enterprise deployment patterns]*
 
+## **Deployment Integration**
+
+### **FluxCD-First Approach**
+hephy-builder focuses on **CI integration only**. Deployment is handled by **FluxCD** using modern GitOps patterns:
+
+- **Image Update Automation**: Automatic updates when new images are built
+- **Semver Wildcards**: Smart version selection without complex CD pipelines  
+- **GitOps**: Declarative configuration in Git repositories
+
+### **Deployment Targets** (Outside hephy-builder scope)
+- **Flux + Crossplane**: Infrastructure provisioning
+- **Flux + Helm**: Application deployment
+- **Flux + Terraform**: Hybrid infrastructure/application management
+
+**Philosophy**: Don't rebuild what FluxCD already does well. Focus on making great container/WASM images, let Flux handle deployment elegantly.
+
 ## **Future Platforms**
 
-### **Potential Integrations**
-- **Jenkins**: Pipeline as code support
-- **CircleCI**: Configuration translation
-- **Azure DevOps**: YAML pipeline compatibility
-- **AWS CodeBuild**: CloudFormation integration
+### **Additional CI Support** (Community-driven)
+- **Azure DevOps**: Community could port hephy-builder patterns
+- **Self-hosted solutions**: Enterprise GitLab/GitHub instances
 
-*[TODO: Assess demand for additional platforms]*
+**Scope Limitation**: We're building GitHub Actions + GitLab CI support. Other platforms are **community porting opportunities**, not core development targets.
+
+*[TODO: Create community contribution guidelines for platform ports]*
