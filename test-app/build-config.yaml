@@ -1,8 +1,8 @@
-# Test application for multi-arch pipeline validation
-# Using spkane/scratch-helloworld as real-world Go app test (x3)
-# This tests our remote cloning implementation!
+# hephy-builder: Test Application Build Configuration
+# Real-world Go HTTP server demonstrating remote repository capabilities  
+# VALIDATION TARGET: Proves hephy-builder foundation for Ko backend integration
 
-# Remote repository configuration
+# Remote repository configuration (GitHub integration)
 upstream_repo: https://github.com/spkane/scratch-helloworld.git
 upstream_ref: main
 

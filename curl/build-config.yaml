@@ -1,6 +1,6 @@
-# Build configuration for curl utility
-# BOOTSTRAP MODE: Using local context to build from well-known image
-# Once manifest-tool is working, we can switch back to upstream_repo
+# hephy-builder: Curl Utility Build Configuration  
+# Bootstrap component for hephy-builder pipeline infrastructure
+# LOCAL MODE: Self-contained build for reliable bootstrap dependency
 use_local_context: true
 
 # Path to Dockerfile relative to this directory

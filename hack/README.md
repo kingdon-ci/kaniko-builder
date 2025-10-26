@@ -1,12 +1,14 @@
-# Build Scripts and Utilities
+# hephy-builder: Build Scripts and Utilities
 
-This directory contains scripts and utilities used by the GitLab CI pipeline.
+This directory contains scripts and utilities used by the hephy-builder GitLab CI pipeline.
+
+**Heritage**: Originally part of kaniko-builder, now supporting the evolution to full hephy-builder multi-backend system.
 
 ## Scripts
 
 ### prepare_diff.sh
 
-This script determines which directories need to be processed during a pipeline run.
+Smart change detection script that determines which directories need processing during pipeline runs - a key component of the efficient hephy-builder system.
 
 **Functionality:**
 - For merge requests: Compares against the target branch to find changed directories

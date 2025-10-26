@@ -1,15 +1,10 @@
-# AGENTS.md - AI Assistant Context for Kaniko Builder
-
-**Purpose**: This document provides comprehensive context for AI assistants to quickly understand the kaniko-builder project, its current state, architecture, and capabilities.
-
-**Repository**: `kingdon-ci/kaniko-builder` (GitHub)  
-# AGENTS.md - AI Assistant Context for Hephy Builder
+# AGENTS.md - AI Assistant Context for hephy-builder
 
 **Purpose**: This document provides comprehensive context for AI assistants to quickly understand the hephy-builder project, its current state, architecture, and capabilities.
 
 **Repository**: `kingdon-ci/kaniko-builder` (GitHub)  
-**Last Updated**: October 24, 2025 (Evolution to hephy-builder)  
-**Status**: ✅ **MVP COMPLETE - PRODUCTION READY** 🚀  
+**Last Updated**: October 26, 2025 (Post-PR #13 merge - hephy-builder transformation complete)  
+**Status**: ✅ **MVP COMPLETE - TRANSFORMATION PHASE** 🚀  
 **Vision**: **Resurrect "git push deis main" with modern tooling**
 
 ## 🔒 Security Guidelines for AI Assistants

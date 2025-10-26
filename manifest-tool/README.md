@@ -1,16 +1,17 @@
-# Manifest Tool Image
+# hephy-builder: Manifest Tool Image
 
-This directory builds a self-contained manifest-tool image based on Alpine Linux.
+Self-contained multi-architecture manifest creation tool - a critical component of the hephy-builder pipeline.
 
-## Purpose
+**Role in hephy-builder**: Enables professional multi-arch container distribution, supporting the transition from single-purpose builds to full PaaS resurrection.
 
-The manifest-tool image is used in the GitLab CI pipeline to create multi-architecture container manifests. It's now completely self-contained to avoid circular dependencies:
+## Purpose & Evolution
 
-1. ✅ Self-contained Alpine base (no external image dependencies)
-2. ✅ Built-in curl and ECR credential helper
-3. ✅ manifest-tool binary for creating multi-arch manifests
-4. ✅ **crane tool for additional tags support** (Oct 16, 2025)
-5. ✅ Resolves circular dependency issue (Oct 16, 2025)
+Originally created to solve circular dependencies in kaniko-builder, now serves as the manifest management component for hephy-builder's multi-backend vision:
+
+1. ✅ **Self-contained** Alpine base (no external dependencies)
+2. ✅ **Professional tagging** with built-in crane tool  
+3. ✅ **Multi-arch manifests** for automatic architecture selection
+4. ✅ **Future-ready** for Ko, Spin, and BuildKit backend integration
 
 ## Build Configuration
 

@@ -1,67 +1,149 @@
-# Kaniko Builder
+# hephy-builder: Resurrect "git push deis main" with Modern Tooling
 
-A GitLab CI pipeline for building multi-architecture container images using Kaniko. This pipeline can build Kaniko itself and other projects with similar semantics.
+**Vision**: Bring back the elegant simplicity of Platform-as-a-Service deployment using secure, multi-platform container and WebAssembly builds.
 
-## Overview
+> *"Sometimes you need the Rube Goldberg harmony of multiple tools working together. Sometimes you need both GitHub and GitLab. Sometimes you need containers AND WebAssembly. These are ingredients. We're not here to tell developers where they can shop, or what they're allowed to cook with."*
 
-This project provides a reusable GitLab CI pipeline that:
-- Builds container images for multiple architectures (amd64 + arm64)
-- Uses Kaniko as the build tool
-- Creates multi-arch manifests for automatic architecture selection
-- Supports building external projects by cloning their repositories
+## 🚀 **Quick Start**
 
-## Current Status: MVP Complete
+### **I want to build containers right now**
+- 📖 **[Build Configuration Guide](docs/BUILD_CONFIG_SPEC.md)** - Complete build-config.yaml reference
+- 🚀 **[Deployment Guide](docs/DEPLOYMENT.md)** - Deploy the pipeline to your GitLab CI
 
-- **Phase 1**: ✅ Basic Kaniko arm64 build implemented
-- **Phase 2**: ✅ Multi-arch support (amd64 + arm64) with manifest creation
-- **Phase 3**: ✅ Generalized framework with build-config.yaml
-- **Phase 4**: ✅ Added second project (curl) and polished implementation
-- **Phase 5**: ✅ Remote repository cloning (Issue #2 - spkane/scratch-helloworld validated)
-- **Phase 6**: ✅ Additional tags support (Issue #4 - `latest`, version tags functional)
+### **I want to understand the vision**  
+- 🏛️ **[The Deis Heritage Story](docs/lore/DEIS_HERITAGE.md)** - The PaaS magic we're bringing back
+- 🎯 **[hephy-builder Vision](docs/lore/HEPHY_VISION.md)** - Modern "git push deis main" for 2025
 
-### Latest Capabilities (Oct 16, 2025)
-- **Remote GitHub repositories**: Clone and build public repos
-- **Professional tagging**: `latest`, `v1.0.0` style tags supported  
-- **Multi-arch manifests**: Automatic architecture selection
-- **External Kaniko**: Using maintained `martizih/kaniko:v1.26.0-debug`
-- **Self-contained tools**: No circular dependencies
+### **I want to contribute**
+- 🔨 **[Project Roadmap](ROADMAP.md)** - Current development priorities
+- 🐛 **[GitHub Issues](https://github.com/kingdon-ci/kaniko-builder/issues)** - Active tasks and features
+- 📚 **[Documentation Hub](docs/README.md)** - Comprehensive project navigation
 
-## Directory Structure
+## 📋 **What This Project Provides**
+
+### **Current Capabilities** *(Production Ready)*
+- **Multi-architecture builds**: AMD64 + ARM64 container images
+- **Secure builds**: Rootless Kaniko execution, no Docker daemon required
+- **Smart pipelines**: Change detection, architecture filtering, dependency resolution
+- **Professional tagging**: Support for latest, version tags, and custom naming
+- **Remote repositories**: Build any GitHub repository with multi-arch support
+
+### **Future Vision** *(Roadmap)*
+- **Ko Backend**: Optimized Go application builds with distroless images
+- **Spin Backend**: WebAssembly applications with millisecond startup
+- **BuildKit Backend**: Advanced Dockerfile features and enhanced caching
+- **GitHub Actions**: Portable workflows equivalent to GitLab CI
+- **Git Remote Server**: True "git push hephy main" experience with real-time logs
+
+## 📊 **Current Status: MVP Complete → Transformation Phase**
+
+### **✅ Production Ready Foundation**
+- Multi-architecture CI/CD pipeline (AMD64 + ARM64)
+- Remote repository building (validated with real-world Go applications)
+- Professional image tagging and registry management
+- Clean architecture with no circular dependencies
+
+### **🚀 Active Development** *(Post-Merger)*
+- **Backend diversification**: Adding Ko, Spin, and BuildKit support
+- **Platform expansion**: GitHub Actions workflow components
+- **Developer experience**: Git remote server for "push to deploy" workflow
+- **Community growth**: Documentation, examples, and contributor onboarding
+
+## 🏗️ **Architecture Overview**
+
+### **Current Implementation**
+```yaml
+GitLab CI Pipeline (.gitlab-ci.yml)
+├── prepare: Change detection & architecture filtering  
+├── build_amd64: Kaniko builds for AMD64
+├── build_arm64: Kaniko builds for ARM64
+└── manifest: Multi-arch manifest creation
+```
+
+### **Future Vision** *(hephy-builder)*
+```yaml
+Multi-Backend Builder
+├── backends: kaniko | ko | buildkit | spin
+├── platforms: gitlab-ci | github-actions  
+├── git-server: SSH with real-time log streaming
+└── deployment: FluxCD | direct-k8s | traditional
+```
+
+## 🌍 **The Deis Heritage Connection**
+
+### **What We Lost**
+In the golden age of Platform-as-a-Service (2014-2017), Deis Workflow provided the magical experience:
+```bash
+git push deis main
+# → Real-time build logs streamed back
+# → Automatic deployment 
+# → "-----> myapp deployed to https://myapp.deis.example.com"
+```
+
+**No YAML configuration files. No pipeline definitions. Just git push.**
+
+### **What We're Building Back**
+hephy-builder resurrects that elegant simplicity using modern, secure tooling:
+- **Multiple build backends**: Choose the optimal tool (Kaniko/Ko/Spin/BuildKit)
+- **Platform portability**: Works with GitHub Actions OR GitLab CI
+- **Security-first**: Rootless builds, WebAssembly sandboxing  
+- **Heritage-inspired**: "git push hephy main" experience for 2025
+
+## 🤝 **Getting Started**
+
+### **Current Users (kaniko-builder)**
+✅ **Zero breaking changes** - your existing configurations continue working  
+✅ **Immediate benefits** - multi-arch builds, remote repositories, professional tagging  
+✅ **Future compatibility** - automatic migration path to hephy-builder features
+
+### **New Users**
+1. **Deploy the pipeline**: Follow the [Deployment Guide](docs/DEPLOYMENT.md)
+2. **Configure your builds**: Use [Build Configuration Spec](docs/BUILD_CONFIG_SPEC.md)  
+3. **Explore the vision**: Read the [Heritage Story](docs/lore/DEIS_HERITAGE.md)
+
+### **Contributors**
+- 🐛 **[Active Issues](https://github.com/kingdon-ci/kaniko-builder/issues)** - Pick up a task
+- 📚 **[Documentation Hub](docs/README.md)** - Comprehensive project navigation
+- 🎯 **[Development Roadmap](ROADMAP.md)** - See where we're heading
+
+## 📁 **Project Structure**
 
 ```
-.
-├── .gitlab-ci.yml          # Main GitLab CI pipeline
-├── hack/                   # Build scripts and utilities
-│   ├── prepare_diff.sh     # Detects changed directories
-│   └── README.md          # Documentation for scripts
-├── README.md              # This file
-├── kaniko/                # Kaniko build configuration
-│   ├── build-config.yaml  # Build metadata for Kaniko
-│   └── README.md          # Kaniko-specific documentation
-├── curl/                  # Curl build configuration
-│   ├── build-config.yaml  # Build metadata for Curl
-│   └── README.md          # Curl-specific documentation
-├── rebuild-weekly.txt     # List of projects to rebuild weekly
+hephy-builder/
+├── docs/                   # 📚 Complete documentation hub
+│   ├── README.md          #     Navigation and contribution guide  
+│   ├── BUILD_CONFIG_SPEC.md #   Configuration reference
+│   ├── DEPLOYMENT.md       #     GitLab CI deployment guide
+│   └── lore/              #     Heritage and vision
+├── .gitlab-ci.yml         # 🚀 Production GitLab CI pipeline  
+├── hack/                  # 🔧 Build scripts and utilities
+├── curl/                  # 📦 Bootstrap utility example
+├── kaniko/                # 📦 Main build target (disabled)
+├── manifest-tool/         # 📦 Multi-arch manifest creation
+└── test-app/              # 📦 Example application builds
 ```
 
-## Usage
+## 💡 **Why hephy-builder?**
 
-The pipeline automatically triggers on:
-- Merges to main branch (builds changed directories)
-- Scheduled runs (builds all directories in rebuild-weekly.txt)
+### **For Developers**
+- **Elegant workflow**: Approaching "git push hephy main" simplicity
+- **Modern security**: Rootless builds, no Docker daemon required
+- **Performance**: Optimal backend selection (Ko for Go, Spin for WASM)
+- **Platform freedom**: GitHub Actions or GitLab CI, your choice
 
-## Configuration
+### **For Platform Teams**  
+- **Multi-architecture**: Native AMD64 + ARM64 support
+- **Enterprise ready**: Self-hosted environments, compliance features
+- **Cost optimization**: Spot instances, smart change detection
+- **Heritage proven**: Built on lessons from Deis Workflow success
 
-Each buildable project has a `build-config.yaml` file that specifies:
-- Upstream repository and version
-- Dockerfile path and build context
-- Target architectures
-- Additional image tags
+### **For The Community**
+- **Open source**: No vendor lock-in, community-driven development
+- **Educational**: Learn PaaS evolution and modern container/WASM tooling  
+- **Contributor friendly**: Clear issues, good documentation, welcoming community
 
-See `kaniko/build-config.yaml` for an example.
+---
 
-## Requirements
+**Welcome to hephy-builder. Let's make "git push deis main" magic again.** ✨
 
-- GitLab runners with multi-architecture support
-- ECR registry access configured via `ECR_REGISTRY` CI/CD variable
-- `CICD_TAG` variable for runner selection
+*Continuing the Deis Workflow heritage with modern tooling for 2025 and beyond.*

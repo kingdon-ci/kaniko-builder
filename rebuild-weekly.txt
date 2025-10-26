@@ -1,2 +1,6 @@
+# hephy-builder: Weekly Rebuild Schedule
+# Projects listed here are rebuilt weekly via scheduled pipeline runs
+# Supporting the evolution from kaniko-builder to full hephy-builder vision
+
 kaniko
 curl
