@@ -1,5 +1,9 @@
-# NodePool configuration for multi-architecture CI/CD builds
+# hephy-builder: Multi-Architecture NodePool Configuration
+# NodePool configuration for multi-architecture CI/CD builds supporting hephy-builder vision
 # Add this to your Crossplane composition alongside the existing eks-spot-nodepool
+#
+# Purpose: Enable true multi-arch builds (AMD64 + ARM64) for hephy-builder pipeline
+# Related: GitHub Issue #16 - Deploy multi-architecture NodePool for CI/CD builds
 
 ## EKS Multi-Architecture Nodepool (Spot)
 

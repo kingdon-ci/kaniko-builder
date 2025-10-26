@@ -1,7 +1,13 @@
-# Variables are set as CI/CD variables in GitLab
+# hephy-builder GitLab CI Pipeline
+# Multi-architecture container builds with modern backend support
+# 
+# Heritage: Evolved from kaniko-builder to support multiple build backends
+# Vision: Foundation for "git push hephy main" experience
+#
+# Variables are set as CI/CD variables in GitLab:
 # - ECR_REGISTRY: The ECR registry URL
 # - CICD_TAG: The runner tag for prepare stage
-# - CICD_TAG_AMD64: The runner tag for amd64 builds
+# - CICD_TAG_AMD64: The runner tag for amd64 builds  
 # - CICD_TAG_ARM64: The runner tag for arm64 builds
 
 stages:
