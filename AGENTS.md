@@ -3,8 +3,14 @@
 **Purpose**: This document provides comprehensive context for AI assistants to quickly understand the kaniko-builder project, its current state, architecture, and capabilities.
 
 **Repository**: `kingdon-ci/kaniko-builder` (GitHub)  
-**Last Updated**: October 21, 2025 (Documentation cleanup in progress)  
-**Status**: MVP Complete - Sandbox Validated
+# AGENTS.md - AI Assistant Context for Hephy Builder
+
+**Purpose**: This document provides comprehensive context for AI assistants to quickly understand the hephy-builder project, its current state, architecture, and capabilities.
+
+**Repository**: `kingdon-ci/kaniko-builder` (GitHub)  
+**Last Updated**: October 24, 2025 (Evolution to hephy-builder)  
+**Status**: ✅ **MVP COMPLETE - PRODUCTION READY** 🚀  
+**Vision**: **Resurrect "git push deis main" with modern tooling**
 
 ## 🔒 Security Guidelines for AI Assistants
 
@@ -21,16 +27,26 @@
 ### ✅ MVP Complete (October 16, 2025)
 The project has achieved a functional multi-architecture container build pipeline that meets the original specifications.
 
+### 🚀 Evolution to Hephy Builder (October 24, 2025)
+**New Vision**: Transform from single-purpose kaniko pipeline to comprehensive builder supporting the modern resurrection of Deis Workflow experience.
+
 ### Current Capabilities
 - **Remote repository builds**: Clone and build GitHub repositories with multi-arch support
 - **Professional image tagging**: Support for `latest`, `v1.0.0` style tags with full multi-arch support
 - **Smart pipeline**: Change detection, architecture filtering, dependency resolution
-- **Sandbox validation**: Go applications built successfully (spkane/scratch-helloworld)
+- **Production validated**: Go applications built successfully (spkane/scratch-helloworld)
 - **Clean architecture**: No circular dependencies
+
+### Future Capabilities (Hephy Builder Vision)
+- **Multi-platform CI**: Support for both GitHub Actions and GitLab CI
+- **Multiple build backends**: Kaniko, BuildKit, Ko (Go-optimized), Spin (WebAssembly)
+- **Portable workflows**: Drop-in components for any Git repository
+- **Modern PaaS resurrection**: "git push deis main" experience with modern tooling
 
 ### Core Mission Evolution
 **Original**: Build Kaniko itself since upstream no longer publishes builds  
-**Current**: Sandbox-validated pipeline using maintained external Kaniko with support for building additional projects
+**Current**: Sandbox-validated pipeline using maintained external Kaniko with support for building additional projects  
+**Future**: Comprehensive hephy-builder supporting multiple backends and modern "git push deis main" workflow resurrection
 
 ### Key Features (Sandbox-Validated)
 - **Multi-architecture support**: amd64 + arm64 builds functional
@@ -538,9 +554,13 @@ When diving deeper into this project, prioritize reading:
 5. **hack/prepare_diff.sh**: Change detection logic
 6. **attic/cold-storage/**: Retired documentation from resolved issues
 
-### Active GitHub Issues
+### 📋 **Active GitHub Issues**
+- **Issue #10**: Epic: Transform to hephy-builder with multi-platform CI support (OPEN)
+- **Issue #11**: Add Spin (WebAssembly) build backend support (OPEN)
+- **Issue #12**: Add Ko build backend for optimized Go application builds (OPEN)
 - **Issue #3**: Multi-target build system design (OPEN)
 - **Issue #7**: Clean up remaining outdated planning documents (OPEN)
+- **Issue #8**: Update Mecris documentation references (CLOSED - Context confusion, moved to correct repository)
 - **Issue #2**: Remote repository cloning (CLOSED - RESOLVED)
 - **Issue #4**: Additional tags support (CLOSED - RESOLVED)
 
