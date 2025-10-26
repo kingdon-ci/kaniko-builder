@@ -1,17 +1,19 @@
-# Attic - Archive and Cold Storage
+# hephy-builder: Archive and Cold Storage
 
-This directory contains historical documentation and reference materials for the kaniko-builder project.
+Historical documentation and reference materials preserving the evolution from kaniko-builder to hephy-builder.
+
+**Heritage Value**: Documents the complete transformation journey, architectural decisions, and lessons learned during the evolution to modern PaaS resurrection.
 
 ## Directory Structure
 
 ### `/cold-storage/`
-**Purpose**: Documents that have been **retired from active use** after issues were resolved and information was migrated to maintained documentation.
+**Purpose**: Retired documents from kaniko-builder phase, preserving historical context for hephy-builder development.
 
-**Contents**: 
-- Resolved issue documentation
-- Redundant planning documents
-- Ad-hoc documents superseded by planned docs
-- Retirement records (`.retired-*.md`)
+**Heritage Contents**: 
+- Resolved kaniko-builder issues and implementation records
+- Original planning documents before transformation
+- Bootstrap process documentation and lessons learned
+- Retirement records documenting the evolution process
 
 **Protocol**: See `cold-storage/README.md` for complete retirement protocol.
 

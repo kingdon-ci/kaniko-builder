@@ -1,17 +1,19 @@
-# Curl Build Configuration
+# hephy-builder: Curl Build Configuration
 
-This directory contains the build configuration for building the curl utility image.
+Bootstrap utility image that demonstrates hephy-builder's multi-architecture capabilities.
+
+**Role in hephy-builder**: Foundation component used by manifest-tool and other builds, showcasing dependency chaining in the hephy-builder ecosystem.
 
 ## Configuration
 
 The `build-config.yaml` file specifies:
-- **Upstream**: https://github.com/curlimages/curl
-- **Version**: master (latest)
-- **Architectures**: amd64 and arm64
+- **Local context build**: Uses curlimages/curl base image
+- **Architectures**: amd64 and arm64 support
+- **Purpose**: Bootstrap utility for hephy-builder pipeline components
 
-## Why Build Curl?
+## Heritage & Purpose
 
-This serves as a second example project to demonstrate the generalizability of our kaniko-builder framework. The curl image is a lightweight utility that's commonly used in containerized environments.
+Originally created as the second example project for kaniko-builder generalization, now serves as a key bootstrap component in the hephy-builder vision.
 
 ## Output Images
 

@@ -1,17 +1,17 @@
-# Test Application for Multi-Arch Pipeline Validation
+# hephy-builder: Test Application for Pipeline Validation
 
-This tests our multi-arch Kaniko pipeline using **spkane/scratch-helloworld** - a real Go HTTP server application.
+Real-world validation using **spkane/scratch-helloworld** - a Go HTTP server that demonstrates hephy-builder's capabilities.
 
-## Purpose
+**Role in hephy-builder**: Production validation of the remote repository building capability that bridges kaniko-builder MVP to full hephy-builder vision.
 
-Validate that:
-- ✅ External Kaniko (`martizih/kaniko:v1.26.0-debug`) can build multi-arch images
-- ✅ **Remote repository cloning works** (Issue #2 validation!)
-- ✅ Pipeline creates both amd64 and arm64 variants  
-- ✅ **Additional tags support** (Issue #4 - testing crane implementation + TODO bug fixes!)  
-- ✅ Manifest tool combines them into multi-arch manifest
-- ✅ Circular dependency between curl/manifest-tool resolved (Oct 16, 2025)
-- ✅ Docker automatically selects correct architecture
+## Purpose & Heritage
+
+This test validates the complete hephy-builder foundation:
+- ✅ **Remote repository builds** (GitHub integration)
+- ✅ **Multi-architecture support** (AMD64 + ARM64)  
+- ✅ **Professional tagging** (latest, version tags, custom names)
+- ✅ **Real-world application** (Go HTTP server, not toy examples)
+- ✅ **Future backend readiness** (Ko will excel with Go applications)
 
 ## What It Does
 

@@ -1,18 +1,24 @@
-# Kaniko Build Configuration
+# hephy-builder: Kaniko Build Configuration
 
-This directory contains the build configuration for building Kaniko itself using Kaniko.
+**Status**: Disabled - Using maintained external Kaniko for hephy-builder foundation
 
-## Configuration
+## Strategic Decision
 
-The `build-config.yaml` file specifies:
-- **Upstream**: https://github.com/chainguard-dev/kaniko
-- **Version**: v1.25.3
-- **Target**: debug (builds the debug variant of Kaniko)
-- **Architectures**: amd64 and arm64
+Instead of building our own Kaniko, hephy-builder uses the maintained `martizih/kaniko:v1.26.0-debug` image:
+- **Zero maintenance overhead** for core build tooling
+- **Community maintained** with regular updates
+- **Battle-tested** reliability for production workloads
 
-## Why Build Kaniko?
+## Configuration (Disabled)
 
-The upstream Kaniko project no longer publishes arm64 builds, but we need multi-architecture support for our build pipeline. This configuration allows us to build our own Kaniko images with both amd64 and arm64 support.
+The `disabled-build-config.yaml` preserves the original configuration for future reference:
+- **Upstream**: https://github.com/chainguard-dev/kaniko  
+- **Target**: debug variant for enhanced logging
+- **Architectures**: amd64 and arm64 support
+
+## hephy-builder Context
+
+This represents the foundation backend (Kaniko) in the multi-backend hephy-builder vision. Future backends (Ko, Spin, BuildKit) will build on this solid foundation.
 
 ## Output Images
 
