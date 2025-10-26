@@ -193,15 +193,38 @@ ko_config:
 ### **Q13: Minimal Viable "Git Push Hephy Main"**
 **Question**: What's the absolute minimum functionality that would make developers excited about `git push hephy main`?
 
-**Scope Options**:
-- **Option A**: Just improved builds (current + Ko/Spin backends)
-- **Option B**: Build + basic deployment (container registry → Kubernetes)
-- **Option C**: Full PaaS recreation (builds + deploy + routing + config)
+**ANSWER**: **Smart Build & Deploy Orchestration** - Option A+B Hybrid
 
-**[AWAITING ANSWER]**
-- Which level delivers the "magic moment"?
-- What can we defer to future phases?
-- Integration complexity vs user value trade-offs?
+**The Magic Moment**:
+```bash
+git push hephy main
+# → Real-time feedback during build
+# → Seamless transition to deployment logs  
+# → "-----> myapp deployed to https://myapp.example.com"
+```
+
+**Scope Definition**:
+- ✅ **Git Server**: Modern git-receive hook (based on teamhephy/builder pattern)
+- ✅ **Build Orchestration**: Trigger existing CI/CD (GitLab CI/GitHub Actions) 
+- ✅ **Log Experience**: stern-powered real-time build+deploy feedback
+- ✅ **Deploy Integration**: Orderly progression from build completion to running app
+- ✅ **Multi-backend**: Kaniko/Ko/Spin builds via existing hephy-builder pipeline
+
+**Key Insight**: *"I would be so happy if I could git push to a stern pipeline that knew when the build was in progress and when it was finished, and waited for the deployment to settle, and did so in an orderly fashion..."*
+
+**Reference Implementation**: https://raw.githubusercontent.com/teamhephy/builder/68c8d55403c2bb668b0b3044746c38a5d7d08d02/pkg/gitreceive/run.go
+
+**Why This Scope**:
+- 🎯 **Reuses proven patterns** - don't reinvent git-receive hook
+- 🎯 **Leverages existing infrastructure** - CI/CD, stern, K8s ecosystem
+- 🎯 **Delivers the feedback experience** - real-time logs, orderly progression
+- 🎯 **Manageable complexity** - orchestration layer, not full PaaS recreation
+- 🎯 **Clear differentiation** - "ingredients not recipes" - smart glue between tools
+
+**NOT in Scope** (saves for later):
+- ❌ Full PaaS features (databases, routing, config management)
+- ❌ Custom container orchestration (use existing K8s)
+- ❌ Competing with Heroku/Railway (complementary tooling)
 
 ### **Q14: Relationship to Existing PaaS Solutions**
 **Question**: How does hephy-builder position against Heroku, Railway, Fly.io? Are we competing, complementing, or carving a unique niche?
