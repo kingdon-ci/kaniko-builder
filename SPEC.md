@@ -1,11 +1,23 @@
 # Specification: Multi-Arch Image Builder Pipeline
 
-**Status**: MVP Complete (October 16, 2025)  
-**Next Phase**: See `ROADMAP.md` for post-MVP planning
+**Status**: MVP Complete → hephy-builder Transformation Complete (October 26, 2025)  
+**Documentation**: See `docs/` for comprehensive guides and specifications  
+**Next Phase**: See GitHub Issues for active development tasks
 
-## MVP Achievement Summary
+## 🎯 **Project Evolution Summary**
 
-### Core Objectives Achieved
+### **Original Mission (kaniko-builder)**
+Build multi-architecture container images with Kaniko, supporting both self-hosted Kaniko builds and external project building.
+
+### **Evolved Mission (hephy-builder)**  
+Resurrect the elegant "git push deis main" developer experience using modern, secure, multi-platform container and WebAssembly build tooling.
+
+### **Transformation Achievements (PR #13)**
+- ✅ **Documentation architecture**: Professional docs/ structure with lore/ heritage preservation
+- ✅ **Vision articulation**: Complete hephy-builder roadmap and developer experience design  
+- ✅ **Implementation roadmap**: 18 GitHub issues spanning research, design, and implementation
+- ✅ **Community foundation**: Contributor onboarding, examples, and clear project navigation
+- ✅ **Heritage preservation**: Deis Workflow story and lessons documented for posterity
 
 ### 1. Build Kaniko Itself - Evolved to External Solution
 - **Original Goal:** Build `gcr.io/kaniko-project/executor:debug` for arm64 + amd64
