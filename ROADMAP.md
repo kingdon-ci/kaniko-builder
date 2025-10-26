@@ -1,22 +1,22 @@
-# ROADMAP & DOCUMENTATION CLEANUP PLAN
-**Date**: October 21, 2025  
-**Status**: MVP Complete - Planning Next Phase
+# hephy-builder Development Roadmap
+**Date**: October 26, 2025  
+**Status**: Transformation Complete - Active Development Phase  
+**Vision**: Resurrect "git push deis main" with modern tooling
 
-## MVP Achieved
+## 🎯 **Current Phase: Foundation → Evolution**
 
-### Core Objectives Met
-1. **Multi-arch container builds** - Functional (amd64 + arm64)
-2. **Remote repository cloning** - Functional (GitHub integration validated)
-3. **Professional image tagging** - Functional (latest, version tags)
-4. **External project support** - Functional (spkane/scratch-helloworld)
-5. **Sandbox validation** - Complete
+### **✅ Transformation Complete (PR #13)**
+- **Documentation architecture**: Professional docs/ structure established
+- **Vision definition**: Complete hephy-builder roadmap and heritage preservation
+- **Community foundation**: 18 GitHub issues created for contributor onboarding
+- **Heritage documentation**: Deis Workflow story preserved in docs/lore/
+- **Implementation roadmap**: Clear path from MVP to full "git push hephy main" experience
 
-### MVP Feature Set
-- **Remote repository builds**: Clone GitHub repos and build multi-arch
-- **Multi-arch manifests**: Automatic architecture selection  
-- **Professional tagging**: `latest`, `v1.0.0` style tags
-- **Smart building**: Change detection, architecture filtering
-- **Self-contained**: No circular dependencies
+### **🚀 Active Development Areas**
+1. **Backend Diversification**: Ko, Spin, BuildKit integration (Issues #11, #12, #14)
+2. **Platform Portability**: GitHub Actions support (Issue #15)
+3. **Git Server Development**: Real-time log streaming for "git push hephy main" (Issues #17, #18)
+4. **Infrastructure Scaling**: Multi-arch NodePool deployment (Issue #16)
 
 ## Documentation Audit & Cleanup Plan
 
