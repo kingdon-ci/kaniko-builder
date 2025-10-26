@@ -1,6 +1,6 @@
-# Build configuration for manifest-tool
-# Self-contained build - no dependencies on other images
-# Updated to remove curl dependency (Oct 16, 2025)
+# hephy-builder: Manifest Tool Build Configuration
+# Multi-architecture manifest creation for hephy-builder backends
+# SELF-CONTAINED: No external dependencies for reliable operation
 use_local_context: true
 
 # Path to Dockerfile relative to this directory
