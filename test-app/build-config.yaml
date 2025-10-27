@@ -20,4 +20,4 @@ platforms:
 # Tags to apply
 additional_tags:
   - latest
-  - pipeline-test
+#  - pipeline-test
