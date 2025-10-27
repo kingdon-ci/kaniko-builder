@@ -103,11 +103,61 @@ jobs:
         echo "🔧 Need AMD64: $NEED_AMD64"
         echo "🔧 Need ARM64: $NEED_ARM64"
         
+        # Clone remote repositories for directories that need them
+        echo "📦 Cloning remote repositories..."
+        for dir in $BUILD_DIRS; do
+          if [ ! -f "$dir/build-config.yaml" ]; then
+            continue
+          fi
+          
+          # Check if this directory uses remote cloning
+          USE_LOCAL=$(grep "use_local_context:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "false")
+          
+          if [ "$USE_LOCAL" != "true" ]; then
+            # This directory needs remote cloning
+            UPSTREAM_REPO=$(grep "upstream_repo:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+            UPSTREAM_REF=$(grep "upstream_ref:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
+            
+            if [ -n "$UPSTREAM_REPO" ] && [ -n "$UPSTREAM_REF" ]; then
+              echo "📦 Cloning $dir from $UPSTREAM_REPO@$UPSTREAM_REF"
+              
+              # Create workspace for this directory
+              CLONE_DIR="clone-${dir}"
+              git clone "$UPSTREAM_REPO" "$CLONE_DIR"
+              cd "$CLONE_DIR"
+              git checkout "$UPSTREAM_REF"
+              cd ..
+              
+              # Package the cloned repository as an artifact
+              ARTIFACT_NAME="${dir}-source.tar.gz"
+              tar -czf "$ARTIFACT_NAME" -C "$CLONE_DIR" .
+              echo "📦 Created artifact: $ARTIFACT_NAME"
+              
+              # Clean up the clone directory to save space
+              rm -rf "$CLONE_DIR"
+              
+              echo "✅ Pre-cloned $dir successfully"
+            else
+              echo "❌ $dir missing upstream_repo or upstream_ref"
+              exit 1
+            fi
+          else
+            echo "⏩ $dir uses local context - no cloning needed"
+          fi
+        done
+        
         # Set GitHub Actions outputs
         echo "dirs=$BUILD_DIRS" >> $GITHUB_OUTPUT
         echo "need_amd64=$NEED_AMD64" >> $GITHUB_OUTPUT  
         echo "need_arm64=$NEED_ARM64" >> $GITHUB_OUTPUT
         echo "has_builds=$([ -n '$BUILD_DIRS' ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+
+    - name: Upload cloned repository artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: cloned-repositories
+        path: "*-source.tar.gz"
+        if-no-files-found: ignore
 
   # AMD64 builds
   build-amd64:
@@ -123,6 +173,13 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+    
+    - name: Download cloned repository artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: cloned-repositories
+        path: .
+      continue-on-error: true
     
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -142,96 +199,11 @@ jobs:
         ARCH: amd64
         DIRS: ${{ needs.prepare.outputs.dirs }}
         DATE_TAG: ${{ github.run_number }}
+        IMAGE_BASE: ${{ env.IMAGE_BASE }}
+        GITHUB_REF: ${{ github.ref }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
       run: |
-        echo "🏗️  Building for architecture: $ARCH"
-        echo "📦 Directories to build: $DIRS"
-        
-        for dir in $DIRS; do
-          echo "========================================="
-          echo "🔨 Processing $dir"
-          echo "========================================="
-          
-          if [ ! -f "$dir/build-config.yaml" ]; then
-            echo "⚠️  No build-config.yaml in $dir, skipping"
-            continue
-          fi
-          
-          # Check if this architecture is supported
-          if ! grep -A 10 "^platforms:" "$dir/build-config.yaml" | grep -q "linux/$ARCH"; then
-            echo "⏭️  Architecture $ARCH not supported for $dir"
-            continue
-          fi
-          
-          # Detect build backend
-          BUILD_BACKEND=$(grep "build_backend:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "kaniko")
-          echo "🔧 Build backend: $BUILD_BACKEND"
-          
-          # Generate image tag
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            TAG="${dir}-${DATE_TAG}-${ARCH}"
-          else
-            REF_NAME=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9.-]/-/g')
-            TAG="${dir}-${DATE_TAG}-${REF_NAME}-${ARCH}"
-          fi
-          
-          IMAGE="${{ env.IMAGE_BASE }}:${TAG}"
-          echo "🏷️  Image tag: $IMAGE"
-          
-          if [ "$BUILD_BACKEND" = "ko" ]; then
-            echo "🚀 Building with Ko backend (3x faster, 4x smaller!)"
-            
-            # Extract Ko configuration
-            KO_IMPORT_PATH=$(grep -A 10 "ko_config:" "$dir/build-config.yaml" | grep "import_path:" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "./cmd/server")
-            KO_BASE_IMAGE=$(grep -A 10 "ko_config:" "$dir/build-config.yaml" | grep "base_image:" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "cgr.dev/chainguard/static:latest")
-            
-            # Extract ldflags
-            KO_LDFLAGS=$(grep -A 15 "ko_config:" "$dir/build-config.yaml" | grep -A 10 "ldflags:" | grep "^[[:space:]]*-" | sed 's/^[[:space:]]*-[[:space:]]*//' | tr '\n' ' ' | sed 's/[[:space:]]*$//' || echo "")
-            
-            echo "  📁 Import path: $KO_IMPORT_PATH"
-            echo "  🐳 Base image: $KO_BASE_IMAGE"
-            echo "  🔗 Ldflags: $KO_LDFLAGS"
-            
-            # Set Ko environment
-            export KO_DOCKER_REPO="${{ env.IMAGE_BASE }}"
-            export KO_DEFAULTBASEIMAGE="$KO_BASE_IMAGE"
-            
-            if [ -n "$KO_LDFLAGS" ]; then
-              export LDFLAGS="$KO_LDFLAGS"
-            fi
-            
-            # Build with Ko
-            cd "$dir"
-            ko build "$KO_IMPORT_PATH" \
-              --platform="linux/$ARCH" \
-              --tags="$TAG"
-            
-            echo "✅ Ko build completed for $dir-$ARCH"
-            
-          else
-            echo "🔨 Building with Kaniko backend"
-            
-            # Extract Kaniko configuration  
-            DOCKERFILE_PATH=$(grep "dockerfile_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "Dockerfile")
-            CONTEXT_PATH=$(grep "context_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo ".")
-            
-            echo "  📄 Dockerfile: $DOCKERFILE_PATH"
-            echo "  📁 Context: $CONTEXT_PATH"
-            
-            # Build with Docker Buildx (Kaniko alternative for GitHub Actions)
-            docker buildx build \
-              --platform="linux/$ARCH" \
-              --file="$dir/$DOCKERFILE_PATH" \
-              --tag="${{ env.IMAGE_BASE }}:$TAG" \
-              --push \
-              "$dir/$CONTEXT_PATH"
-            
-            echo "✅ Kaniko-equivalent build completed for $dir-$ARCH"
-          fi
-          
-          # Save image tag for manifest stage
-          echo "$TAG" > "${dir}-${ARCH}.tag"
-          
-        done
+        ./hack/build_images.sh "$ARCH" "$DIRS" "$DATE_TAG"
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
@@ -254,6 +226,13 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
     
+    - name: Download cloned repository artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: cloned-repositories
+        path: .
+      continue-on-error: true
+    
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
     
@@ -272,96 +251,11 @@ jobs:
         ARCH: arm64
         DIRS: ${{ needs.prepare.outputs.dirs }}
         DATE_TAG: ${{ github.run_number }}
+        IMAGE_BASE: ${{ env.IMAGE_BASE }}
+        GITHUB_REF: ${{ github.ref }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
       run: |
-        echo "🏗️  Building for architecture: $ARCH"
-        echo "📦 Directories to build: $DIRS"
-        
-        for dir in $DIRS; do
-          echo "========================================="
-          echo "🔨 Processing $dir"
-          echo "========================================="
-          
-          if [ ! -f "$dir/build-config.yaml" ]; then
-            echo "⚠️  No build-config.yaml in $dir, skipping"
-            continue
-          fi
-          
-          # Check if this architecture is supported
-          if ! grep -A 10 "^platforms:" "$dir/build-config.yaml" | grep -q "linux/$ARCH"; then
-            echo "⏭️  Architecture $ARCH not supported for $dir"
-            continue
-          fi
-          
-          # Detect build backend
-          BUILD_BACKEND=$(grep "build_backend:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "kaniko")
-          echo "🔧 Build backend: $BUILD_BACKEND"
-          
-          # Generate image tag
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            TAG="${dir}-${DATE_TAG}-${ARCH}"
-          else
-            REF_NAME=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9.-]/-/g')
-            TAG="${dir}-${DATE_TAG}-${REF_NAME}-${ARCH}"
-          fi
-          
-          IMAGE="${{ env.IMAGE_BASE }}:${TAG}"
-          echo "🏷️  Image tag: $IMAGE"
-          
-          if [ "$BUILD_BACKEND" = "ko" ]; then
-            echo "🚀 Building with Ko backend (3x faster, 4x smaller!)"
-            
-            # Extract Ko configuration
-            KO_IMPORT_PATH=$(grep -A 10 "ko_config:" "$dir/build-config.yaml" | grep "import_path:" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "./cmd/server")
-            KO_BASE_IMAGE=$(grep -A 10 "ko_config:" "$dir/build-config.yaml" | grep "base_image:" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "cgr.dev/chainguard/static:latest")
-            
-            # Extract ldflags
-            KO_LDFLAGS=$(grep -A 15 "ko_config:" "$dir/build-config.yaml" | grep -A 10 "ldflags:" | grep "^[[:space:]]*-" | sed 's/^[[:space:]]*-[[:space:]]*//' | tr '\n' ' ' | sed 's/[[:space:]]*$//' || echo "")
-            
-            echo "  📁 Import path: $KO_IMPORT_PATH"
-            echo "  🐳 Base image: $KO_BASE_IMAGE"
-            echo "  🔗 Ldflags: $KO_LDFLAGS"
-            
-            # Set Ko environment
-            export KO_DOCKER_REPO="${{ env.IMAGE_BASE }}"
-            export KO_DEFAULTBASEIMAGE="$KO_BASE_IMAGE"
-            
-            if [ -n "$KO_LDFLAGS" ]; then
-              export LDFLAGS="$KO_LDFLAGS"
-            fi
-            
-            # Build with Ko
-            cd "$dir"
-            ko build "$KO_IMPORT_PATH" \
-              --platform="linux/$ARCH" \
-              --tags="$TAG"
-            
-            echo "✅ Ko build completed for $dir-$ARCH"
-            
-          else
-            echo "🔨 Building with Kaniko backend"
-            
-            # Extract Kaniko configuration  
-            DOCKERFILE_PATH=$(grep "dockerfile_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "Dockerfile")
-            CONTEXT_PATH=$(grep "context_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo ".")
-            
-            echo "  📄 Dockerfile: $DOCKERFILE_PATH"
-            echo "  📁 Context: $CONTEXT_PATH"
-            
-            # Build with Docker Buildx (Kaniko alternative for GitHub Actions)
-            docker buildx build \
-              --platform="linux/$ARCH" \
-              --file="$dir/$DOCKERFILE_PATH" \
-              --tag="${{ env.IMAGE_BASE }}:$TAG" \
-              --push \
-              "$dir/$CONTEXT_PATH"
-            
-            echo "✅ Kaniko-equivalent build completed for $dir-$ARCH"
-          fi
-          
-          # Save image tag for manifest stage
-          echo "$TAG" > "${dir}-${ARCH}.tag"
-          
-        done
+        ./hack/build_images.sh "$ARCH" "$DIRS" "$DATE_TAG"
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
