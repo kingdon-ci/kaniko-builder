@@ -3,6 +3,11 @@
 
 build_backend: ko
 
+# Standard platforms (detected by workflow)
+platforms:
+  - linux/amd64
+  - linux/arm64
+
 # Ko-specific settings optimized for testing
 ko_config:
   # Import path for the Ko demo application
@@ -10,11 +15,6 @@ ko_config:
   
   # Minimal base image for security
   base_image: cgr.dev/chainguard/static:latest
-  
-  # Test on both architectures
-  platforms:
-    - linux/amd64
-    - linux/arm64
   
   # Build optimization
   env:
