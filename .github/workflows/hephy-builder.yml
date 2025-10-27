@@ -3,8 +3,9 @@
 # Full implementation with actual Ko builds for Go applications
 # Demonstrates multi-backend strategy with GitHub Container Registry
 #
-# Status: Production Ready for Ko backend
+# Status: Production Ready for Ko backend with native ARM64 runners
 # Registry: ghcr.io/kingdon-ci/kaniko-builder
+# 🚀 NEW: Native ARM64 runners (Jan 2025) - 40% faster, free for public repos!
 
 name: hephy-builder
 
@@ -239,10 +240,10 @@ jobs:
         name: build-tags-amd64
         path: "*.tag"
 
-  # ARM64 builds  
+  # ARM64 builds - Native ARM64 runners (40% faster!)
   build-arm64:
     name: Build (arm64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm  # 🚀 NEW: Native ARM64 runners, free for public repos!
     needs: prepare
     if: needs.prepare.outputs.has_builds == 'true' && needs.prepare.outputs.need_arm64 == 'true'
     
@@ -391,6 +392,13 @@ jobs:
         pattern: build-tags-*
         merge-multiple: true
     
+    - name: Debug downloaded artifacts
+      run: |
+        echo "🔍 DEBUG: Artifacts downloaded:"
+        ls -la
+        echo "🔍 DEBUG: All .tag files:"
+        find . -name "*.tag" -exec ls -la {} \; || echo "No .tag files found"
+    
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
@@ -418,18 +426,30 @@ jobs:
             BASE_TAG="${dir}-${DATE_TAG}-${REF_NAME}"
           fi
           
+          # Debug: Show what files are available
+          echo "🔍 DEBUG: Files in current directory:"
+          ls -la *.tag 2>/dev/null || echo "  No .tag files found!"
+          
+          echo "🔍 DEBUG: Looking for:"
+          echo "  Expected: ${dir}-amd64.tag"
+          echo "  Expected: ${dir}-arm64.tag"
+          
           # Collect architecture-specific images
           IMAGES=""
           if [ -f "${dir}-amd64.tag" ]; then
             AMD64_TAG=$(cat "${dir}-amd64.tag")
             IMAGES="$IMAGES ${{ env.IMAGE_BASE }}:$AMD64_TAG"
             echo "  🔧 AMD64: $AMD64_TAG"
+          else
+            echo "  ❌ Missing: ${dir}-amd64.tag"
           fi
           
           if [ -f "${dir}-arm64.tag" ]; then
             ARM64_TAG=$(cat "${dir}-arm64.tag")
             IMAGES="$IMAGES ${{ env.IMAGE_BASE }}:$ARM64_TAG"
             echo "  🔧 ARM64: $ARM64_TAG"
+          else
+            echo "  ❌ Missing: ${dir}-arm64.tag"
           fi
           
           if [ -n "$IMAGES" ]; then
