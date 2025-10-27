@@ -1,0 +1,516 @@
+# Hephy-Builder GitHub Actions Workflow
+# Multi-architecture container builds with modern backend support
+# 
+# This workflow replicates GitLab CI functionality while addressing limitations:
+# - Shell availability for script extraction
+# - Git availability in build environment  
+# - Modular design with reusable components
+# - Multi-backend support (Kaniko, Ko, BuildKit, Spin)
+
+name: Hephy-Builder Multi-Backend Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Weekly builds for dependency updates
+    - cron: '0 6 * * 1'  # Mondays at 6 AM UTC
+
+env:
+  REGISTRY: ghcr.io
+  REGISTRY_USER: ${{ github.actor }}
+  REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # Prepare stage - Change detection, architecture filtering, repository pre-cloning
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      dirs: ${{ steps.prepare.outputs.dirs }}
+      need_amd64: ${{ steps.prepare.outputs.need_amd64 }}
+      need_arm64: ${{ steps.prepare.outputs.need_arm64 }}
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for change detection
+
+      - name: Setup environment
+        run: |
+          # Install any additional tools needed for prepare stage
+          sudo apt-get update
+          sudo apt-get install -y yq
+          
+          # Export GitHub-specific environment variables for prepare script
+          export CI_REPOSITORY_URL="${{ github.server_url }}/${{ github.repository }}"
+          export CI_COMMIT_REF_NAME="${{ github.ref_name }}"
+          export CI_PROJECT_DIR="${{ github.workspace }}"
+          
+          # Handle different trigger types
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            export CI_MERGE_REQUEST_TARGET_BRANCH_NAME="${{ github.base_ref }}"
+          fi
+          
+          echo "CI_REPOSITORY_URL=$CI_REPOSITORY_URL" >> $GITHUB_ENV
+          echo "CI_COMMIT_REF_NAME=$CI_COMMIT_REF_NAME" >> $GITHUB_ENV
+          echo "CI_PROJECT_DIR=$CI_PROJECT_DIR" >> $GITHUB_ENV
+
+      - name: Run prepare logic
+        id: prepare
+        run: |
+          # Use existing prepare script (adapted for GitHub Actions)
+          ${{ github.workspace }}/hack/prepare_diff.sh
+          
+          # Filter dirs.txt to only include directories with build-config.yaml
+          if [ -f "dirs.txt" ]; then
+            echo "Filtering directories to only those with build-config.yaml..."
+            > dirs.txt.filtered
+            while IFS= read -r dir; do
+              if [ -f "$dir/build-config.yaml" ]; then
+                echo "  ✓ $dir has build-config.yaml"
+                echo "$dir" >> dirs.txt.filtered
+              else
+                echo "  ✗ $dir has no build-config.yaml - skipping"
+              fi
+            done < dirs.txt
+            mv dirs.txt.filtered dirs.txt
+          fi
+          
+          # Handle scheduled builds
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if [ -f "rebuild-weekly.txt" ]; then
+              echo "Scheduled build - using rebuild-weekly.txt"
+              cp rebuild-weekly.txt dirs.txt
+            fi
+          fi
+          
+          # Determine required architectures and build matrix
+          echo "Determining required architectures and backends..."
+          NEED_AMD64=false
+          NEED_ARM64=false
+          MATRIX_INCLUDE=""
+          
+          if [ -f "dirs.txt" ]; then
+            while IFS= read -r dir; do
+              if [ -f "$dir/build-config.yaml" ]; then
+                # Extract backend and platforms
+                BUILD_BACKEND=$(yq e '.build_backend // "kaniko"' "$dir/build-config.yaml")
+                PLATFORMS=$(yq e '.platforms[]' "$dir/build-config.yaml" 2>/dev/null || echo "linux/amd64")
+                
+                # Check for each platform
+                echo "$PLATFORMS" | while read -r platform; do
+                  case "$platform" in
+                    "linux/amd64")
+                      NEED_AMD64=true
+                      MATRIX_INCLUDE="${MATRIX_INCLUDE}{\"dir\":\"$dir\",\"arch\":\"amd64\",\"backend\":\"$BUILD_BACKEND\"},"
+                      ;;
+                    "linux/arm64")
+                      NEED_ARM64=true
+                      MATRIX_INCLUDE="${MATRIX_INCLUDE}{\"dir\":\"$dir\",\"arch\":\"arm64\",\"backend\":\"$BUILD_BACKEND\"},"
+                      ;;
+                  esac
+                done
+              fi
+            done < dirs.txt
+          fi
+          
+          # Create architecture flags
+          if [ "$NEED_AMD64" = "true" ]; then
+            echo "true" > need_amd64.txt
+            echo "need_amd64=true" >> $GITHUB_OUTPUT
+          else
+            echo "false" > need_amd64.txt
+            echo "need_amd64=false" >> $GITHUB_OUTPUT
+          fi
+          
+          if [ "$NEED_ARM64" = "true" ]; then
+            echo "true" > need_arm64.txt
+            echo "need_arm64=true" >> $GITHUB_OUTPUT
+          else
+            echo "false" > need_arm64.txt
+            echo "need_arm64=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # Set outputs for matrix builds
+          if [ -f "dirs.txt" ]; then
+            DIRS_JSON=$(jq -R -s -c 'split("\n")[:-1]' < dirs.txt)
+            echo "dirs=$DIRS_JSON" >> $GITHUB_OUTPUT
+          else
+            echo "dirs=[]" >> $GITHUB_OUTPUT
+          fi
+          
+          # Create build matrix (remove trailing comma and wrap in array)
+          if [ -n "$MATRIX_INCLUDE" ]; then
+            MATRIX_JSON="[${MATRIX_INCLUDE%,}]"
+            echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
+          else
+            echo "matrix=[]" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Pre-clone remote repositories
+        run: |
+          # Pre-clone remote repositories for build stage
+          if [ -f "dirs.txt" ]; then
+            while IFS= read -r dir; do
+              if [ -f "$dir/build-config.yaml" ]; then
+                # Check if this directory needs remote cloning
+                USE_LOCAL=$(yq e '.use_local_context // false' "$dir/build-config.yaml")
+                
+                if [ "$USE_LOCAL" != "true" ]; then
+                  # This directory needs remote cloning
+                  UPSTREAM_REPO=$(yq e '.upstream_repo' "$dir/build-config.yaml")
+                  UPSTREAM_REF=$(yq e '.upstream_ref' "$dir/build-config.yaml")
+                  
+                  if [ "$UPSTREAM_REPO" != "null" ] && [ "$UPSTREAM_REF" != "null" ]; then
+                    echo "📦 Cloning $dir from $UPSTREAM_REPO@$UPSTREAM_REF"
+                    
+                    # Create workspace for this directory
+                    CLONE_DIR="clone-${dir}"
+                    git clone "$UPSTREAM_REPO" "$CLONE_DIR"
+                    cd "$CLONE_DIR"
+                    git checkout "$UPSTREAM_REF"
+                    cd ..
+                    
+                    # Package the cloned repository as an artifact
+                    ARTIFACT_NAME="${dir}-source.tar.gz"
+                    tar -czf "$ARTIFACT_NAME" -C "$CLONE_DIR" .
+                    echo "📦 Created artifact: $ARTIFACT_NAME"
+                    
+                    # Clean up the clone directory to save space
+                    rm -rf "$CLONE_DIR"
+                    
+                    echo "✓ Pre-cloned $dir successfully"
+                  else
+                    echo "❌ $dir missing upstream_repo or upstream_ref"
+                    exit 1
+                  fi
+                else
+                  echo "⏩ $dir uses local context - no cloning needed"
+                fi
+              fi
+            done < dirs.txt
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: prepare-artifacts
+          path: |
+            dirs.txt
+            need_amd64.txt
+            need_arm64.txt
+            *-source.tar.gz
+          retention-days: 1
+
+  # Build stage - Multi-architecture builds with backend selection
+  build:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.dirs != '[]' }}
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+        include: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      fail-fast: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download prepare artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: prepare-artifacts
+
+      - name: Check if build needed for architecture
+        id: check-build
+        run: |
+          # Check if this architecture is actually needed
+          NEED_FILE="need_${{ matrix.arch }}.txt"
+          if [ -f "$NEED_FILE" ]; then
+            NEED_ARCH=$(cat "$NEED_FILE")
+            if [ "$NEED_ARCH" != "true" ]; then
+              echo "Architecture ${{ matrix.arch }} not needed - skipping"
+              echo "skip=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+          echo "skip=false" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        if: steps.check-build.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU
+        if: steps.check-build.outputs.skip != 'true'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Log in to Container Registry
+        if: steps.check-build.outputs.skip != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ env.REGISTRY_USER }}
+          password: ${{ env.REGISTRY_PASSWORD }}
+
+      - name: Install backend tools
+        if: steps.check-build.outputs.skip != 'true'
+        run: |
+          # Install Ko for Go builds
+          echo "Installing Ko..."
+          curl -sSfL https://github.com/ko-build/ko/releases/latest/download/ko_$(uname)_$(uname -m).tar.gz | tar xzf - ko
+          sudo mv ko /usr/local/bin/
+          
+          # Install crane for manifest operations
+          echo "Installing crane..."
+          curl -sSfL https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_$(uname)_$(uname -m).tar.gz | tar xzf - crane
+          sudo mv crane /usr/local/bin/
+
+      - name: Build with selected backend
+        if: steps.check-build.outputs.skip != 'true'
+        run: |
+          # Process each directory in dirs.txt for this architecture
+          IFS=$'\n'
+          BUILT_SOMETHING=false
+          
+          for dir in $(cat dirs.txt); do
+            echo "========================================="
+            echo "Processing directory: $dir for architecture: ${{ matrix.arch }}"
+            echo "========================================="
+            
+            # Read build config
+            if [ ! -f "$dir/build-config.yaml" ]; then
+              echo "No build-config.yaml found in $dir. Skipping."
+              continue
+            fi
+            
+            # Check if this architecture is in the platforms list
+            PLATFORMS=$(yq e '.platforms[]' "$dir/build-config.yaml" 2>/dev/null | grep "linux/${{ matrix.arch }}" || echo "")
+            if [ -z "$PLATFORMS" ]; then
+              echo "Architecture ${{ matrix.arch }} not in platforms list for $dir. Skipping."
+              continue
+            fi
+            
+            echo "Architecture ${{ matrix.arch }} found in platforms list for $dir"
+            
+            # Extract configuration
+            BUILD_BACKEND=$(yq e '.build_backend // "kaniko"' "$dir/build-config.yaml")
+            USE_LOCAL=$(yq e '.use_local_context // false' "$dir/build-config.yaml")
+            UPSTREAM_REPO=$(yq e '.upstream_repo' "$dir/build-config.yaml")
+            UPSTREAM_REF=$(yq e '.upstream_ref' "$dir/build-config.yaml")
+            DOCKERFILE_PATH=$(yq e '.dockerfile_path // "Dockerfile"' "$dir/build-config.yaml")
+            CONTEXT_PATH=$(yq e '.context_path // "."' "$dir/build-config.yaml")
+            TARGET=$(yq e '.target' "$dir/build-config.yaml")
+            
+            # Determine workspace
+            if [ "$USE_LOCAL" = "true" ]; then
+              echo "Using local context for $dir"
+              WORKSPACE="${{ github.workspace }}/$dir"
+            else
+              echo "Using pre-cloned repository for $dir"
+              WORKSPACE="/tmp/workspace-${dir}"
+              ARTIFACT_NAME="${dir}-source.tar.gz"
+              
+              if [ -f "$ARTIFACT_NAME" ]; then
+                echo "📦 Extracting $ARTIFACT_NAME to $WORKSPACE"
+                mkdir -p "$WORKSPACE"
+                tar -xzf "$ARTIFACT_NAME" -C "$WORKSPACE"
+                echo "✓ Repository extracted successfully"
+              else
+                echo "❌ Pre-cloned artifact $ARTIFACT_NAME not found!"
+                continue
+              fi
+            fi
+            
+            # Generate image tags
+            DATE_TAG=$(date +%Y%m%d)
+            if [ "$USE_LOCAL" = "true" ]; then
+              BASE_TAG="${dir}-${DATE_TAG}"
+            else
+              REF_TAG=$(echo "$UPSTREAM_REF" | tr '/' '-' | tr '.' '-')
+              BASE_TAG="${dir}-${DATE_TAG}-${REF_TAG}"
+            fi
+            ARCH_TAG="${BASE_TAG}-${{ matrix.arch }}"
+            FULL_TAG="${{ env.REGISTRY }}/${{ github.repository_owner }}/hephy-builder:${ARCH_TAG}"
+            
+            echo "Building image with tag: $ARCH_TAG"
+            echo "Build backend: $BUILD_BACKEND"
+            echo "Full tag: $FULL_TAG"
+            
+            # Execute build based on backend type
+            case "$BUILD_BACKEND" in
+              "ko")
+                echo "🚀 Starting Ko build for Go application..."
+                
+                # Set up Ko environment
+                export KO_DOCKER_REPO="${{ env.REGISTRY }}/${{ github.repository_owner }}/hephy-builder"
+                export GOARCH="${{ matrix.arch }}"
+                export GOOS="linux"
+                export CGO_ENABLED=0
+                
+                # Navigate to workspace for Ko build
+                cd "$WORKSPACE"
+                
+                # Extract Ko-specific configuration
+                KO_IMPORT_PATH=$(yq e '.ko_config.import_path // "./cmd/server"' "${{ github.workspace }}/$dir/build-config.yaml")
+                KO_BASE_IMAGE=$(yq e '.ko_config.base_image // "cgr.dev/chainguard/static:latest"' "${{ github.workspace }}/$dir/build-config.yaml")
+                
+                # Set Ko base image
+                if [ "$KO_BASE_IMAGE" != "null" ]; then
+                  export KO_DEFAULTBASEIMAGE="$KO_BASE_IMAGE"
+                fi
+                
+                # Build with Ko for specific platform
+                echo "Building Ko image for platform: linux/${{ matrix.arch }}"
+                ko build "$KO_IMPORT_PATH" \
+                  --platform="linux/${{ matrix.arch }}" \
+                  --bare \
+                  --tags="$ARCH_TAG"
+                
+                echo "✅ Ko build successful for $dir"
+                ;;
+                
+              "kaniko"|*)
+                echo "🔨 Starting Kaniko build..."
+                
+                # Build with Docker Buildx (equivalent to Kaniko for GitHub Actions)
+                BUILD_ARGS=""
+                TARGET_ARG=""
+                
+                # Add target if specified
+                if [ "$TARGET" != "null" ] && [ -n "$TARGET" ]; then
+                  TARGET_ARG="--target=$TARGET"
+                fi
+                
+                # Check if image needs registry build arg
+                if grep -q "^ARG.*REGISTRY" "$WORKSPACE/$DOCKERFILE_PATH" 2>/dev/null; then
+                  BUILD_ARGS="--build-arg REGISTRY=${{ env.REGISTRY }}"
+                fi
+                
+                docker buildx build \
+                  --platform linux/${{ matrix.arch }} \
+                  --context "$WORKSPACE/$CONTEXT_PATH" \
+                  --file "$WORKSPACE/$DOCKERFILE_PATH" \
+                  $TARGET_ARG \
+                  $BUILD_ARGS \
+                  --tag "$FULL_TAG" \
+                  --push
+                
+                echo "✅ Kaniko-equivalent build successful for $dir"
+                ;;
+            esac
+            
+            BUILT_SOMETHING=true
+            
+            # Store the arch-specific tag for the manifest stage
+            echo "$ARCH_TAG" > "${dir}-${{ matrix.arch }}.tag"
+            echo "Saved tag file: ${dir}-${{ matrix.arch }}.tag with content: $ARCH_TAG"
+          done
+          
+          if [ "$BUILT_SOMETHING" = "false" ]; then
+            echo "No images were built for architecture ${{ matrix.arch }}"
+            echo "This is OK if all directories were skipped due to platform filtering"
+          fi
+
+      - name: Upload build artifacts
+        if: steps.check-build.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts-${{ matrix.arch }}
+          path: "*.tag"
+          retention-days: 1
+
+  # Manifest stage - Create multi-arch manifests
+  manifest:
+    needs: [prepare, build]
+    if: ${{ needs.prepare.outputs.dirs != '[]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Install manifest tools
+        run: |
+          # Install crane for manifest operations
+          curl -sSfL https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_$(uname)_$(uname -m).tar.gz | tar xzf - crane
+          sudo mv crane /usr/local/bin/
+          
+          # Install manifest-tool
+          curl -sSfL https://github.com/estesp/manifest-tool/releases/latest/download/binaries-manifest-tool-$(uname)-$(uname -m).tar.gz | tar xzf - manifest-tool
+          sudo mv manifest-tool /usr/local/bin/
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ env.REGISTRY_USER }}
+          password: ${{ env.REGISTRY_PASSWORD }}
+
+      - name: Create multi-arch manifests
+        run: |
+          echo "Creating multi-arch manifests"
+          
+          # Consolidate tag files from both architectures
+          find . -name "*.tag" -exec cp {} . \;
+          
+          MANIFESTS_CREATED=0
+          
+          # Process each directory that was built
+          for dir in $(cat prepare-artifacts/dirs.txt); do
+            echo "Processing manifests for $dir"
+            
+            # Check if this directory has multi-arch builds
+            AMD64_TAG_FILE="${dir}-amd64.tag"
+            ARM64_TAG_FILE="${dir}-arm64.tag"
+            
+            if [ ! -f "$ARM64_TAG_FILE" ] && [ ! -f "$AMD64_TAG_FILE" ]; then
+              echo "No build artifacts for $dir - skipping"
+              continue
+            fi
+            
+            # Handle single-arch builds
+            if [ ! -f "$ARM64_TAG_FILE" ] || [ ! -f "$AMD64_TAG_FILE" ]; then
+              echo "Single-arch build for $dir - no manifest needed"
+              continue
+            fi
+            
+            # Get the arch-specific tags
+            ARM64_TAG=$(cat "$ARM64_TAG_FILE")
+            AMD64_TAG=$(cat "$AMD64_TAG_FILE")
+            BASE_TAG=$(echo $ARM64_TAG | sed 's/-arm64$//')
+            
+            echo "Creating manifest for base tag: $BASE_TAG"
+            REGISTRY_BASE="${{ env.REGISTRY }}/${{ github.repository_owner }}/hephy-builder"
+            
+            # Create multi-arch manifest using crane
+            crane index append \
+              --manifest "$REGISTRY_BASE:$AMD64_TAG" \
+              --manifest "$REGISTRY_BASE:$ARM64_TAG" \
+              --tag "$REGISTRY_BASE:$BASE_TAG"
+            
+            echo "✅ Multi-arch manifest created for $BASE_TAG"
+            MANIFESTS_CREATED=$((MANIFESTS_CREATED + 1))
+            
+            # Process additional tags
+            ADDITIONAL_TAGS=$(yq e '.additional_tags[]?' "$dir/build-config.yaml" 2>/dev/null || echo "")
+            if [ -n "$ADDITIONAL_TAGS" ]; then
+              echo "Processing additional tags for $dir:"
+              echo "$ADDITIONAL_TAGS" | while read -r tag; do
+                if [ -n "$tag" ]; then
+                  ADDITIONAL_TAG="${dir}-${tag}"
+                  echo "  Creating additional tag: $ADDITIONAL_TAG"
+                  crane tag "$REGISTRY_BASE:$BASE_TAG" "$ADDITIONAL_TAG"
+                  echo "  ✅ Tagged $REGISTRY_BASE:$ADDITIONAL_TAG"
+                fi
+              done
+            fi
+          done
+          
+          echo "✅ Successfully created $MANIFESTS_CREATED multi-arch manifest(s)"

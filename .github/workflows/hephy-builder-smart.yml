@@ -1,0 +1,633 @@
+# Hephy-Builder: Smart Dynamic Workflow with Caching
+# 
+# Solves key problems:
+# 1. Dynamic job creation - only runs needed architectures
+# 2. Intelligent caching - Go modules, Docker layers, build cache
+# 3. PR testing - fast cached builds for quick feedback
+# 4. Single workflow - no confusion with multiple files
+
+name: hephy-builder
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly dependency updates
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ghcr.io/${{ github.repository }}
+  # Use run number for main builds, PR number for PRs
+  BUILD_TAG: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || github.run_number }}
+
+jobs:
+  # Smart analysis - determines exactly what to build
+  analyze:
+    name: Analyze Build Requirements
+    runs-on: ubuntu-latest
+    
+    outputs:
+      # Dynamic job outputs - only what's actually needed
+      needs_ko: ${{ steps.scan.outputs.needs_ko }}
+      needs_kaniko_amd64: ${{ steps.scan.outputs.needs_kaniko_amd64 }}
+      needs_kaniko_arm64: ${{ steps.scan.outputs.needs_kaniko_arm64 }}
+      ko_dirs: ${{ steps.scan.outputs.ko_dirs }}
+      kaniko_amd64_dirs: ${{ steps.scan.outputs.kaniko_amd64_dirs }}
+      kaniko_arm64_dirs: ${{ steps.scan.outputs.kaniko_arm64_dirs }}
+      cache_key: ${{ steps.scan.outputs.cache_key }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Smart build analysis
+      id: scan
+      run: |
+        echo "🔍 Smart analysis: determining exact build requirements..."
+        
+        # Determine changed directories
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          echo "📋 PR mode - analyzing changes vs $BASE_SHA"
+        elif [ "${{ github.event_name }}" = "schedule" ]; then
+          # Weekly builds: use rebuild-weekly.txt
+          if [ -f "rebuild-weekly.txt" ]; then
+            CHANGED_DIRS=$(cat rebuild-weekly.txt | tr '\n' ' ')
+            echo "📅 Scheduled build - using rebuild-weekly.txt: $CHANGED_DIRS"
+          else
+            CHANGED_DIRS=""
+          fi
+        else
+          BASE_SHA="${{ github.event.before }}"
+          echo "📋 Push mode - analyzing changes vs $BASE_SHA"
+        fi
+        
+        if [ -z "$CHANGED_DIRS" ]; then
+          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            CHANGED_DIRS=$(git diff --name-only $BASE_SHA HEAD | grep '/' | cut -d/ -f1 | sort -u)
+          else
+            # First commit or fallback
+            CHANGED_DIRS=$(find . -maxdepth 1 -type d -name "*" | grep -v "^\\.$" | sed 's|^\./||')
+          fi
+        fi
+        
+        # Initialize counters
+        KO_DIRS=""
+        KANIKO_AMD64_DIRS=""
+        KANIKO_ARM64_DIRS=""
+        NEEDS_KO=false
+        NEEDS_KANIKO_AMD64=false
+        NEEDS_KANIKO_ARM64=false
+        
+        echo "📁 Analyzing directories: $CHANGED_DIRS"
+        
+        for dir in $CHANGED_DIRS; do
+          # Skip non-build directories
+          case "$dir" in
+            examples|docs|attic|.github|hack)
+              echo "  ⏭️  $dir: non-build directory, skipping"
+              continue
+              ;;
+          esac
+          
+          if [ ! -f "$dir/build-config.yaml" ]; then
+            echo "  ⏭️  $dir: no build-config.yaml"
+            continue
+          fi
+          
+          # Detect backend
+          BACKEND=$(grep "build_backend:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "kaniko")
+          
+          if [ "$BACKEND" = "ko" ]; then
+            echo "  🚀 $dir: Ko backend (native multi-arch)"
+            KO_DIRS="$KO_DIRS $dir"
+            NEEDS_KO=true
+          else
+            echo "  🔨 $dir: Kaniko backend - checking architectures..."
+            
+            # Check SPECIFIC platforms for this directory
+            PLATFORMS=$(grep -A 10 "^platforms:" "$dir/build-config.yaml" | grep "linux/" | sed 's/.*linux\///' | tr '\n' ' ')
+            
+            for arch in $PLATFORMS; do
+              case "$arch" in
+                amd64)
+                  echo "    ✅ $dir needs amd64"
+                  KANIKO_AMD64_DIRS="$KANIKO_AMD64_DIRS $dir"
+                  NEEDS_KANIKO_AMD64=true
+                  ;;
+                arm64)
+                  echo "    ✅ $dir needs arm64"  
+                  KANIKO_ARM64_DIRS="$KANIKO_ARM64_DIRS $dir"
+                  NEEDS_KANIKO_ARM64=true
+                  ;;
+              esac
+            done
+          fi
+        done
+        
+        # Clean up directory lists
+        KO_DIRS=$(echo $KO_DIRS | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+        KANIKO_AMD64_DIRS=$(echo $KANIKO_AMD64_DIRS | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+        KANIKO_ARM64_DIRS=$(echo $KANIKO_ARM64_DIRS | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+        
+        echo ""
+        echo "🎯 Smart Analysis Results:"
+        echo "   Ko builds needed: $NEEDS_KO ($KO_DIRS)"
+        echo "   Kaniko AMD64 needed: $NEEDS_KANIKO_AMD64 ($KANIKO_AMD64_DIRS)"
+        echo "   Kaniko ARM64 needed: $NEEDS_KANIKO_ARM64 ($KANIKO_ARM64_DIRS)"
+        
+        # Generate cache key based on actual dependencies
+        CACHE_KEY="hephy-${{ github.ref_name }}-${{ hashFiles('**/go.mod', '**/go.sum', '**/build-config.yaml', '**/Dockerfile') }}"
+        
+        # Pre-clone remote repositories
+        echo "📦 Pre-cloning remote repositories..."
+        ALL_DIRS="$KO_DIRS $KANIKO_AMD64_DIRS $KANIKO_ARM64_DIRS"
+        for dir in $ALL_DIRS; do
+          if [ ! -f "$dir/build-config.yaml" ]; then
+            continue
+          fi
+          
+          USE_LOCAL=$(grep "use_local_context:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "false")
+          
+          if [ "$USE_LOCAL" != "true" ]; then
+            UPSTREAM_REPO=$(grep "upstream_repo:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ')
+            UPSTREAM_REF=$(grep "upstream_ref:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ')
+            
+            if [ -n "$UPSTREAM_REPO" ] && [ -n "$UPSTREAM_REF" ]; then
+              echo "📦 Cloning $dir from $UPSTREAM_REPO@$UPSTREAM_REF"
+              git clone "$UPSTREAM_REPO" "clone-${dir}"
+              cd "clone-${dir}" && git checkout "$UPSTREAM_REF" && cd ..
+              tar -czf "${dir}-source.tar.gz" -C "clone-${dir}" .
+              rm -rf "clone-${dir}"
+            fi
+          fi
+        done
+        
+        # Set outputs for conditional job execution
+        echo "needs_ko=$NEEDS_KO" >> $GITHUB_OUTPUT
+        echo "needs_kaniko_amd64=$NEEDS_KANIKO_AMD64" >> $GITHUB_OUTPUT
+        echo "needs_kaniko_arm64=$NEEDS_KANIKO_ARM64" >> $GITHUB_OUTPUT
+        echo "ko_dirs=$KO_DIRS" >> $GITHUB_OUTPUT
+        echo "kaniko_amd64_dirs=$KANIKO_AMD64_DIRS" >> $GITHUB_OUTPUT
+        echo "kaniko_arm64_dirs=$KANIKO_ARM64_DIRS" >> $GITHUB_OUTPUT
+        echo "cache_key=$CACHE_KEY" >> $GITHUB_OUTPUT
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: sources
+        path: "*-source.tar.gz"
+        if-no-files-found: ignore
+
+  # Ko builds: Native multi-arch with aggressive caching
+  ko-build:
+    name: Ko Build (Multi-Arch + Cache)
+    runs-on: ubuntu-latest
+    needs: analyze
+    if: needs.analyze.outputs.needs_ko == 'true'
+    
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+        cache: true  # Automatic Go module caching
+    
+    - name: Download sources
+      uses: actions/download-artifact@v4
+      with:
+        name: sources
+        path: .
+      continue-on-error: true
+    
+    - name: Cache Ko builds
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/ko
+          ~/.cache/go-build
+        key: ko-${{ needs.analyze.outputs.cache_key }}
+        restore-keys: |
+          ko-${{ github.ref_name }}-
+          ko-main-
+    
+    - name: Set up Ko
+      uses: ko-build/setup-ko@v0.7
+    
+    - name: Log in to Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Ko builds with caching
+      env:
+        KO_DIRS: ${{ needs.analyze.outputs.ko_dirs }}
+      run: |
+        echo "🚀 Ko builds with intelligent caching..."
+        
+        export KO_DOCKER_REPO="${{ env.IMAGE_BASE }}"
+        
+        for dir in $KO_DIRS; do
+          echo "========================================="
+          echo "🚀 Building $dir with Ko (cached)"
+          echo "========================================="
+          
+          # Determine workspace
+          USE_LOCAL=$(grep "use_local_context:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "false")
+          
+          if [ "$USE_LOCAL" = "true" ]; then
+            BUILD_CONTEXT="$dir"
+          else
+            BUILD_CONTEXT="/tmp/workspace-${dir}"
+            mkdir -p "$BUILD_CONTEXT"
+            tar -xzf "${dir}-source.tar.gz" -C "$BUILD_CONTEXT"
+          fi
+          
+          cd "$BUILD_CONTEXT"
+          
+          # Extract Ko configuration
+          KO_IMPORT_PATH=$(grep -A 10 "ko_config:" "${{ github.workspace }}/$dir/build-config.yaml" | grep "import_path:" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "./cmd/server")
+          KO_BASE_IMAGE=$(grep -A 10 "ko_config:" "${{ github.workspace }}/$dir/build-config.yaml" | grep "base_image:" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "cgr.dev/chainguard/static:latest")
+          PLATFORMS=$(grep -A 10 "^platforms:" "${{ github.workspace }}/$dir/build-config.yaml" | grep "linux/" | tr '\n' ',' | sed 's/,$//')
+          
+          export KO_DEFAULTBASEIMAGE="$KO_BASE_IMAGE"
+          
+          # Build with caching (should be lightning fast on cache hit!)
+          TAG="${dir}-${{ env.BUILD_TAG }}"
+          
+          echo "🏗️  Building: $KO_IMPORT_PATH"
+          echo "🏷️  Tag: $TAG"
+          echo "📦 Platforms: $PLATFORMS"
+          
+          START_TIME=$(date +%s)
+          
+          ko build "$KO_IMPORT_PATH" \
+            --platform="$PLATFORMS" \
+            --tags="$TAG"
+          
+          END_TIME=$(date +%s)
+          BUILD_TIME=$((END_TIME - START_TIME))
+          
+          echo "✅ Ko build completed in ${BUILD_TIME}s"
+          
+          # Additional tags
+          ADDITIONAL_TAGS=$(grep -A 10 "additional_tags:" "${{ github.workspace }}/$dir/build-config.yaml" | grep "^[[:space:]]*-" | sed 's/^[[:space:]]*-[[:space:]]*//' || echo "")
+          
+          for tag in $ADDITIONAL_TAGS; do
+            if [ -n "$tag" ]; then
+              ADDITIONAL_TAG="${dir}-${tag}"
+              echo "🏷️  Adding tag: $ADDITIONAL_TAG"
+              ko build "$KO_IMPORT_PATH" \
+                --platform="$PLATFORMS" \
+                --tags="$ADDITIONAL_TAG"
+            fi
+          done
+          
+          cd "${{ github.workspace }}"
+        done
+
+  # Kaniko AMD64: Only runs if needed
+  kaniko-amd64:
+    name: Kaniko AMD64
+    runs-on: ubuntu-latest
+    needs: analyze
+    if: needs.analyze.outputs.needs_kaniko_amd64 == 'true'
+    
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Download sources
+      uses: actions/download-artifact@v4
+      with:
+        name: sources
+        path: .
+      continue-on-error: true
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: buildx-amd64-${{ needs.analyze.outputs.cache_key }}
+        restore-keys: |
+          buildx-amd64-${{ github.ref_name }}-
+          buildx-amd64-main-
+    
+    - name: Log in to Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Build AMD64 images
+      env:
+        KANIKO_DIRS: ${{ needs.analyze.outputs.kaniko_amd64_dirs }}
+        ARCH: amd64
+      run: |
+        echo "🔨 Kaniko AMD64 builds with caching..."
+        
+        for dir in $KANIKO_DIRS; do
+          echo "========================================="
+          echo "🔨 Building $dir for AMD64"
+          echo "========================================="
+          
+          # Determine workspace
+          USE_LOCAL=$(grep "use_local_context:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "false")
+          
+          if [ "$USE_LOCAL" = "true" ]; then
+            BUILD_CONTEXT="$dir"
+          else
+            BUILD_CONTEXT="/tmp/workspace-${dir}"
+            mkdir -p "$BUILD_CONTEXT"
+            tar -xzf "${dir}-source.tar.gz" -C "$BUILD_CONTEXT"
+          fi
+          
+          # Extract configuration
+          DOCKERFILE_PATH=$(grep "dockerfile_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "Dockerfile")
+          CONTEXT_PATH=$(grep "context_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo ".")
+          
+          TAG="${dir}-${{ env.BUILD_TAG }}-amd64"
+          IMAGE="${{ env.IMAGE_BASE }}:${TAG}"
+          
+          echo "🏷️  Building: $IMAGE"
+          
+          START_TIME=$(date +%s)
+          
+          # Build with caching
+          docker buildx build \
+            --platform="linux/amd64" \
+            --file="$BUILD_CONTEXT/$DOCKERFILE_PATH" \
+            --tag="$IMAGE" \
+            --cache-from=type=local,src=/tmp/.buildx-cache \
+            --cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --push \
+            "$BUILD_CONTEXT/$CONTEXT_PATH"
+          
+          END_TIME=$(date +%s)
+          BUILD_TIME=$((END_TIME - START_TIME))
+          
+          echo "✅ AMD64 build completed in ${BUILD_TIME}s"
+          echo "$TAG" > "${dir}-amd64.tag"
+        done
+        
+        # Move cache (workaround for buildx cache limitation)
+        rm -rf /tmp/.buildx-cache
+        mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+    
+    - name: Upload tags
+      uses: actions/upload-artifact@v4
+      with:
+        name: amd64-tags
+        path: "*-amd64.tag"
+
+  # Kaniko ARM64: Only runs if needed  
+  kaniko-arm64:
+    name: Kaniko ARM64
+    runs-on: ubuntu-latest
+    needs: analyze
+    if: needs.analyze.outputs.needs_kaniko_arm64 == 'true'
+    
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Download sources
+      uses: actions/download-artifact@v4
+      with:
+        name: sources
+        path: .
+      continue-on-error: true
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: buildx-arm64-${{ needs.analyze.outputs.cache_key }}
+        restore-keys: |
+          buildx-arm64-${{ github.ref_name }}-
+          buildx-arm64-main-
+    
+    - name: Log in to Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Build ARM64 images
+      env:
+        KANIKO_DIRS: ${{ needs.analyze.outputs.kaniko_arm64_dirs }}
+        ARCH: arm64
+      run: |
+        echo "🔨 Kaniko ARM64 builds with caching..."
+        
+        for dir in $KANIKO_DIRS; do
+          echo "========================================="
+          echo "🔨 Building $dir for ARM64"
+          echo "========================================="
+          
+          # Determine workspace
+          USE_LOCAL=$(grep "use_local_context:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "false")
+          
+          if [ "$USE_LOCAL" = "true" ]; then
+            BUILD_CONTEXT="$dir"
+          else
+            BUILD_CONTEXT="/tmp/workspace-${dir}"
+            mkdir -p "$BUILD_CONTEXT"
+            tar -xzf "${dir}-source.tar.gz" -C "$BUILD_CONTEXT"
+          fi
+          
+          # Extract configuration
+          DOCKERFILE_PATH=$(grep "dockerfile_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "Dockerfile")
+          CONTEXT_PATH=$(grep "context_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo ".")
+          
+          TAG="${dir}-${{ env.BUILD_TAG }}-arm64"
+          IMAGE="${{ env.IMAGE_BASE }}:${TAG}"
+          
+          echo "🏷️  Building: $IMAGE"
+          
+          START_TIME=$(date +%s)
+          
+          # Build with caching
+          docker buildx build \
+            --platform="linux/arm64" \
+            --file="$BUILD_CONTEXT/$DOCKERFILE_PATH" \
+            --tag="$IMAGE" \
+            --cache-from=type=local,src=/tmp/.buildx-cache \
+            --cache-to=type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --push \
+            "$BUILD_CONTEXT/$CONTEXT_PATH"
+          
+          END_TIME=$(date +%s)
+          BUILD_TIME=$((END_TIME - START_TIME))
+          
+          echo "✅ ARM64 build completed in ${BUILD_TIME}s"
+          echo "$TAG" > "${dir}-arm64.tag"
+        done
+        
+        # Move cache
+        rm -rf /tmp/.buildx-cache
+        mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+    
+    - name: Upload tags
+      uses: actions/upload-artifact@v4
+      with:
+        name: arm64-tags  
+        path: "*-arm64.tag"
+
+  # Manifests: Only runs if Kaniko builds happened
+  manifests:
+    name: Multi-Arch Manifests
+    runs-on: ubuntu-latest
+    needs: [analyze, kaniko-amd64, kaniko-arm64]
+    if: always() && (needs.analyze.outputs.needs_kaniko_amd64 == 'true' || needs.analyze.outputs.needs_kaniko_arm64 == 'true')
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    
+    - name: Download AMD64 tags
+      uses: actions/download-artifact@v4
+      with:
+        name: amd64-tags
+        path: .
+      continue-on-error: true
+    
+    - name: Download ARM64 tags
+      uses: actions/download-artifact@v4
+      with:
+        name: arm64-tags
+        path: .
+      continue-on-error: true
+    
+    - name: Log in to Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Create manifests
+      env:
+        KANIKO_AMD64_DIRS: ${{ needs.analyze.outputs.kaniko_amd64_dirs }}
+        KANIKO_ARM64_DIRS: ${{ needs.analyze.outputs.kaniko_arm64_dirs }}
+      run: |
+        echo "🔧 Creating multi-arch manifests for Kaniko builds..."
+        
+        # Combine all Kaniko directories
+        ALL_KANIKO_DIRS="$KANIKO_AMD64_DIRS $KANIKO_ARM64_DIRS"
+        UNIQUE_DIRS=$(echo $ALL_KANIKO_DIRS | tr ' ' '\n' | sort -u | tr '\n' ' ')
+        
+        for dir in $UNIQUE_DIRS; do
+          if [ -z "$dir" ]; then continue; fi
+          
+          echo "========================================="
+          echo "🔧 Processing $dir"
+          echo "========================================="
+          
+          IMAGES=""
+          
+          # Check for AMD64 image
+          if [ -f "${dir}-amd64.tag" ]; then
+            AMD64_TAG=$(cat "${dir}-amd64.tag")
+            AMD64_IMAGE="${{ env.IMAGE_BASE }}:$AMD64_TAG"
+            IMAGES="$IMAGES $AMD64_IMAGE"
+            echo "  📦 AMD64: $AMD64_IMAGE"
+          fi
+          
+          # Check for ARM64 image
+          if [ -f "${dir}-arm64.tag" ]; then
+            ARM64_TAG=$(cat "${dir}-arm64.tag")
+            ARM64_IMAGE="${{ env.IMAGE_BASE }}:$ARM64_TAG"
+            IMAGES="$IMAGES $ARM64_IMAGE"
+            echo "  📦 ARM64: $ARM64_IMAGE"
+          fi
+          
+          if [ -n "$IMAGES" ]; then
+            BASE_TAG="${dir}-${{ env.BUILD_TAG }}"
+            
+            echo "  🎯 Creating manifest: ${{ env.IMAGE_BASE }}:$BASE_TAG"
+            docker buildx imagetools create --tag "${{ env.IMAGE_BASE }}:$BASE_TAG" $IMAGES
+            
+            # Additional tags
+            ADDITIONAL_TAGS=$(grep -A 10 "additional_tags:" "$dir/build-config.yaml" | grep "^[[:space:]]*-" | sed 's/^[[:space:]]*-[[:space:]]*//' || echo "")
+            
+            for tag in $ADDITIONAL_TAGS; do
+              if [ -n "$tag" ]; then
+                ADDITIONAL_TAG="${dir}-${tag}"
+                echo "  🏷️  Additional tag: ${{ env.IMAGE_BASE }}:$ADDITIONAL_TAG"
+                docker buildx imagetools create --tag "${{ env.IMAGE_BASE }}:$ADDITIONAL_TAG" $IMAGES
+              fi
+            done
+            
+            echo "  ✅ Manifest created for $dir"
+          else
+            echo "  ⚠️  No images found for $dir"
+          fi
+        done
+
+  # Summary: Always runs with intelligent reporting
+  summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: [analyze, ko-build, kaniko-amd64, kaniko-arm64, manifests]
+    if: always()
+    
+    steps:
+    - name: Smart summary
+      run: |
+        echo "🎯 Hephy-Builder Smart Workflow Summary"
+        echo "======================================"
+        echo ""
+        echo "📊 Build Analysis:"
+        echo "   Ko builds: ${{ needs.analyze.outputs.needs_ko }} (${{ needs.analyze.outputs.ko_dirs }})"
+        echo "   Kaniko AMD64: ${{ needs.analyze.outputs.needs_kaniko_amd64 }} (${{ needs.analyze.outputs.kaniko_amd64_dirs }})"
+        echo "   Kaniko ARM64: ${{ needs.analyze.outputs.needs_kaniko_arm64 }} (${{ needs.analyze.outputs.kaniko_arm64_dirs }})"
+        echo ""
+        echo "⚡ Efficiency Improvements:"
+        echo "   - Only ran needed architecture jobs"
+        echo "   - Go module caching for Ko builds"
+        echo "   - Docker layer caching for Kaniko builds"
+        echo "   - PR builds use cached layers for speed"
+        echo ""
+        
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          echo "🧪 PR Testing:"
+          echo "   Build tag: pr-${{ github.event.number }}"
+          echo "   Fast cached builds for quick feedback"
+        else
+          echo "🚀 Production Build:"
+          echo "   Build tag: ${{ env.BUILD_TAG }}"
+          echo "   Full multi-arch images pushed to registry"
+        fi
+        
+        echo ""
+        echo "🎉 Smart workflow complete!"
