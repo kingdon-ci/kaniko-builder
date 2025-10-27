@@ -11,7 +11,7 @@ import (
 )
 
 // version will be set via ldflags during build
-var version = "dev"
+var version = "github-test-v1.0"
 
 // AppInfo represents the application information
 type AppInfo struct {
