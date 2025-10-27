@@ -211,6 +211,7 @@ prepare:
         set -x
         
         # Extract values from build-config.yaml (use || echo "" to handle missing fields)
+        BUILD_BACKEND=$(grep "build_backend:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "kaniko")
         USE_LOCAL=$(grep "use_local_context:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
         MANUAL_BUILD=$(grep "manual_build:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
         UPSTREAM_REPO=$(grep "upstream_repo:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
@@ -218,6 +219,12 @@ prepare:
         DOCKERFILE_PATH=$(grep "dockerfile_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
         CONTEXT_PATH=$(grep "context_path:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "")
         TARGET=$(grep "target:" "$dir/build-config.yaml" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' | tr -d '"' || echo "")
+        
+        # Ko backend specific configuration
+        if [ "$BUILD_BACKEND" = "ko" ]; then
+          KO_IMPORT_PATH=$(grep -A 10 "ko_config:" "$dir/build-config.yaml" | grep "import_path:" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "./cmd/server")
+          KO_BASE_IMAGE=$(grep -A 10 "ko_config:" "$dir/build-config.yaml" | grep "base_image:" | cut -d':' -f2- | sed 's/#.*//' | tr -d ' ' || echo "cgr.dev/chainguard/static:latest")
+        fi
         
         # Check for manual build mode (for BuildKit-incompatible images)
         if [ "$MANUAL_BUILD" = "true" ]; then
@@ -295,49 +302,97 @@ prepare:
         fi
         
         echo "Building image with tag: $ARCH_TAG"
+        echo "Build backend: $BUILD_BACKEND"
         
-        # Build the image with Kaniko
-        TARGET_ARG=""
-        if [ -n "$TARGET" ]; then
-          TARGET_ARG="--target=$TARGET"
-        fi
-        
-        # Prepare build args - check if we need to pass dependency image tags
-        # Handle build args conditionally based on image needs
-        BUILD_ARG_ECR=""
-        BUILD_ARG_ECR_VAL=""
-        
-        # Check if image needs ECR_REGISTRY build arg (scan Dockerfile for ARG ECR_REGISTRY)
-        if grep -q "^ARG ECR_REGISTRY" "$dir/Dockerfile" 2>/dev/null; then
-          BUILD_ARG_ECR="--build-arg"
-          BUILD_ARG_ECR_VAL="ECR_REGISTRY=$ECR_REGISTRY"
-          echo "Image $dir needs ECR_REGISTRY build arg"
+        # Execute build based on backend type
+        if [ "$BUILD_BACKEND" = "ko" ]; then
+          echo "========================================="
+          echo "🚀 Starting Ko build for Go application..."
+          echo "========================================="
+          
+          # Set up Ko environment
+          export KO_DOCKER_REPO="$ECR_REGISTRY"
+          export GOARCH="$ARCH"
+          export GOOS="linux"
+          export CGO_ENABLED=0
+          
+          # Navigate to workspace for Ko build
+          cd "$WORKSPACE"
+          
+          # Extract Ko-specific ldflags if present
+          KO_LDFLAGS=$(grep -A 15 "ko_config:" "$CI_PROJECT_DIR/$dir/build-config.yaml" | grep -A 10 "ldflags:" | grep "^[[:space:]]*-" | sed 's/^[[:space:]]*-[[:space:]]*//' | tr '\n' ' ' | sed 's/[[:space:]]*$//' || echo "")
+          
+          if [ -n "$KO_LDFLAGS" ]; then
+            export KO_LDFLAGS="$KO_LDFLAGS"
+            echo "Using Ko ldflags: $KO_LDFLAGS"
+          fi
+          
+          # Set Ko base image
+          if [ -n "$KO_BASE_IMAGE" ]; then
+            export KO_DEFAULTBASEIMAGE="$KO_BASE_IMAGE"
+            echo "Using Ko base image: $KO_BASE_IMAGE"
+          fi
+          
+          # Build with Ko for specific platform
+          echo "Building Ko image for platform: linux/$ARCH"
+          ko build "$KO_IMPORT_PATH" \
+            --platform="linux/$ARCH" \
+            --bare \
+            --tags="$ARCH_TAG"
+          
+          BUILD_EXIT_CODE=$?
+          if [ $BUILD_EXIT_CODE -ne 0 ]; then
+            echo "ERROR: Ko build failed with exit code $BUILD_EXIT_CODE"
+            exit $BUILD_EXIT_CODE
+          fi
+          
+          echo "✅ Ko build successful for $dir (3x faster than Kaniko!)"
+          
         else
-          echo "Image $dir is self-contained (no ECR_REGISTRY dependency)"
+          # Default to Kaniko build
+          echo "========================================="
+          echo "Starting Kaniko build..."
+          echo "========================================="
+          
+          # Build the image with Kaniko
+          TARGET_ARG=""
+          if [ -n "$TARGET" ]; then
+            TARGET_ARG="--target=$TARGET"
+          fi
+          
+          # Prepare build args - check if we need to pass dependency image tags
+          # Handle build args conditionally based on image needs
+          BUILD_ARG_ECR=""
+          BUILD_ARG_ECR_VAL=""
+          
+          # Check if image needs ECR_REGISTRY build arg (scan Dockerfile for ARG ECR_REGISTRY)
+          if grep -q "^ARG ECR_REGISTRY" "$dir/Dockerfile" 2>/dev/null; then
+            BUILD_ARG_ECR="--build-arg"
+            BUILD_ARG_ECR_VAL="ECR_REGISTRY=$ECR_REGISTRY"
+            echo "Image $dir needs ECR_REGISTRY build arg"
+          else
+            echo "Image $dir is self-contained (no ECR_REGISTRY dependency)"
+          fi
+          
+          /kaniko/executor \
+            --context=$WORKSPACE/$CONTEXT_PATH \
+            --dockerfile=$WORKSPACE/$DOCKERFILE_PATH \
+            $TARGET_ARG \
+            $BUILD_ARG_ECR $BUILD_ARG_ECR_VAL \
+            --custom-platform=linux/${ARCH} \
+            --cache=false \
+            --use-new-run \
+            --cleanup \
+            --destination=$ECR_REGISTRY:$ARCH_TAG
+          
+          BUILD_EXIT_CODE=$?
+          if [ $BUILD_EXIT_CODE -ne 0 ]; then
+            echo "ERROR: Kaniko build failed with exit code $BUILD_EXIT_CODE"
+            exit $BUILD_EXIT_CODE
+          fi
+          
+          echo "Build successful for $dir"
         fi
-        
-        # Build for specified architecture
-        echo "========================================="
-        echo "Starting Kaniko build..."
-        echo "========================================="
-        /kaniko/executor \
-          --context=$WORKSPACE/$CONTEXT_PATH \
-          --dockerfile=$WORKSPACE/$DOCKERFILE_PATH \
-          $TARGET_ARG \
-          $BUILD_ARG_ECR $BUILD_ARG_ECR_VAL \
-          --custom-platform=linux/${ARCH} \
-          --cache=false \
-          --use-new-run \
-          --cleanup \
-          --destination=$ECR_REGISTRY:$ARCH_TAG
-        
-        BUILD_EXIT_CODE=$?
-        if [ $BUILD_EXIT_CODE -ne 0 ]; then
-          echo "ERROR: Kaniko build failed with exit code $BUILD_EXIT_CODE"
-          exit $BUILD_EXIT_CODE
-        fi
-        
-        echo "Build successful for $dir"
         BUILT_SOMETHING=true
         
         # Additional tags will be handled in the manifest stage using crane

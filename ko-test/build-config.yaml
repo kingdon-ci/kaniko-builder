@@ -1,0 +1,36 @@
+# Test Ko Demo Build Configuration
+# This is a minimal Ko backend test that can be moved to root level for testing
+
+build_backend: ko
+
+# Ko-specific settings optimized for testing
+ko_config:
+  # Import path for the Ko demo application
+  import_path: ./cmd/server
+  
+  # Minimal base image for security
+  base_image: cgr.dev/chainguard/static:latest
+  
+  # Test on both architectures
+  platforms:
+    - linux/amd64
+    - linux/arm64
+  
+  # Build optimization
+  env:
+    - CGO_ENABLED=0
+  
+  # Optimization flags
+  ldflags:
+    - "-s"
+    - "-w"
+    - "-X main.version=github-test"
+
+# Standard configuration
+context_path: .
+build_args: []
+
+# Test tags
+additional_tags:
+  - latest
+  - github-test
