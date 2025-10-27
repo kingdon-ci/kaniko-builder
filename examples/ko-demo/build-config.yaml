@@ -1,0 +1,42 @@
+# Ko Backend Configuration
+build_backend: ko
+
+# Ko-specific settings
+ko_config:
+  # Import path for the Go application
+  import_path: ./cmd/server
+  
+  # Base image - distroless for security and size
+  base_image: cgr.dev/chainguard/static:latest
+  
+  # Multi-architecture support
+  platforms:
+    - linux/amd64
+    - linux/arm64
+  
+  # Go build environment
+  env:
+    - CGO_ENABLED=0
+    - KO_BUILT=true
+  
+  # Linker flags for optimization
+  ldflags:
+    - "-s"          # Strip symbol table
+    - "-w"          # Strip debug info
+    - "-X main.version=v1.0.0"
+  
+  # Working directory in container
+  working_dir: /app
+
+# Standard hephy-builder configuration
+context_path: .
+build_args: []
+
+# Additional tags for the image
+additional_tags:
+  - latest
+  - ko-demo
+  - optimized
+
+# Comparison note: This Ko configuration replaces a traditional
+# Dockerfile while providing better optimization and security
