@@ -1,5 +1,6 @@
 # Dockerfile for manifest-tool
 # Self-contained image - no dependencies on other builds
+# Test build: Oct 26, 2025 - GitHub Actions Kaniko backend validation
 FROM alpine:latest
 
 # Install tools needed for extracting and building
