@@ -4,6 +4,8 @@ Self-contained multi-architecture manifest creation tool - a critical component 
 
 **Role in hephy-builder**: Enables professional multi-arch container distribution, supporting the transition from single-purpose builds to full PaaS resurrection.
 
+**Test Build**: Testing GitHub Actions integration with Kaniko backend (Oct 26, 2025)
+
 ## Purpose & Evolution
 
 Originally created to solve circular dependencies in kaniko-builder, now serves as the manifest management component for hephy-builder's multi-backend vision:

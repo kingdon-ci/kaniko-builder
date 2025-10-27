@@ -221,8 +221,7 @@ jobs:
             docker buildx build \
               --platform="linux/$ARCH" \
               --file="$dir/$DOCKERFILE_PATH" \
-              --context="$dir/$CONTEXT_PATH" \
-              --tag="$IMAGE" \
+              --tag="${{ env.IMAGE_BASE }}:$TAG" \
               --push \
               "$dir/$CONTEXT_PATH"
             
@@ -352,8 +351,7 @@ jobs:
             docker buildx build \
               --platform="linux/$ARCH" \
               --file="$dir/$DOCKERFILE_PATH" \
-              --context="$dir/$CONTEXT_PATH" \
-              --tag="$IMAGE" \
+              --tag="${{ env.IMAGE_BASE }}:$TAG" \
               --push \
               "$dir/$CONTEXT_PATH"
             
