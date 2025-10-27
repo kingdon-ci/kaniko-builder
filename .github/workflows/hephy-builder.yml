@@ -239,10 +239,10 @@ jobs:
         name: build-tags-amd64
         path: "*.tag"
 
-  # ARM64 builds - Native ARM64 runners (40% faster!)
+  # ARM64 builds - Use ubuntu-latest with emulation for now, native ARM64 when public
   build-arm64:
     name: Build (arm64)
-    runs-on: ubuntu-24.04-arm  # 🚀 NEW: Native ARM64 runners, free for public repos!
+    runs-on: ubuntu-latest  # TODO: Change to ubuntu-24.04-arm when public for 40% faster builds
     needs: prepare
     if: needs.prepare.outputs.has_builds == 'true' && needs.prepare.outputs.need_arm64 == 'true'
     
